@@ -130,7 +130,7 @@ function App() {
               >
                 <div className={`flex max-w-[80%] ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} gap-3`}>
                   {/* Avatar */}
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium ${
+                  <div className={`w-8 h-8 min-w-[2rem] min-h-[2rem] flex-shrink-0 rounded-full flex items-center justify-center text-white text-sm font-medium ${
                     message.role === 'user' 
                       ? 'bg-blue-600' 
                       : 'bg-green-600'
@@ -193,7 +193,7 @@ function App() {
             {isLoading && (
               <div className="flex justify-start">
                 <div className="flex max-w-[80%] gap-3">
-                  <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
+                  <div className="w-8 h-8 min-w-[2rem] min-h-[2rem] flex-shrink-0 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-medium">
                     AI
                   </div>
                   <div className="bg-gray-800 text-gray-100 border border-gray-700 rounded-lg px-4 py-3">
