@@ -1,3 +1,70 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Global overflow prevention */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+/* Aggressive text wrapping for chat messages */
+.markdown-content * {
+  word-wrap: break-word !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  hyphens: auto !important;
+  max-width: 100% !important;
+}
+
+/* Prevent code blocks from causing overflow */
+.markdown-content code,
+.markdown-content pre {
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+  overflow-x: hidden !important;
+}
+
+/* Ensure links break properly */
+.markdown-content a {
+  word-break: break-all !important;
+  overflow-wrap: break-word !important;
+}
+
+/* Prevent UI blinking during re-renders */
+.markdown-content {
+  will-change: auto;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+
+/* Smooth transitions for message containers */
+.message-container {
+  transition: none;
+}
+
+/* Prevent default touch behaviors on image viewer */
+.image-viewer-modal {
+  touch-action: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Auto-expanding textarea styles */
+textarea {
+  field-sizing: content; /* Modern browsers auto-sizing */
+}
+
+/* Fallback for browsers that don't support field-sizing */
+@supports not (field-sizing: content) {
+  textarea {
+    resize: none;
+    overflow: hidden;
+  }
+}
