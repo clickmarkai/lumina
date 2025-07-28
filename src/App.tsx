@@ -206,7 +206,7 @@ const ImageViewer = React.memo(({ src, alt, isOpen, onClose }: {
   const handleTouchStart = (e: React.TouchEvent) => {
     e.preventDefault()
     if (e.touches.length === 2) {
-      setLastTouchDistance(getTouchDistance(e.touches))
+      setLastTouchDistance(getTouchDistance(e.touches as any as TouchList))
     } else if (e.touches.length === 1 && zoom > 1) {
       setIsDragging(true)
       setDragStart({ 
@@ -219,7 +219,7 @@ const ImageViewer = React.memo(({ src, alt, isOpen, onClose }: {
   const handleTouchMove = (e: React.TouchEvent) => {
     e.preventDefault()
     if (e.touches.length === 2) {
-      const newDistance = getTouchDistance(e.touches)
+      const newDistance = getTouchDistance(e.touches as any as TouchList)
       if (lastTouchDistance > 0) {
         const scale = newDistance / lastTouchDistance
         const newZoom = Math.max(0.5, Math.min(3, zoom * scale))
@@ -450,7 +450,7 @@ function App() {
     (window as any).getUserId = () => {
       const currentUserId = localStorage.getItem('lumina_user_id')
       console.log('Current user ID:', currentUserId)
-      return currentUserId
+      return currentUserId || undefined
     }
     
     return () => {
@@ -515,13 +515,13 @@ function App() {
         // Style project headers
         const headerStyle = {
           font: { bold: true, size: 14 },
-          alignment: { horizontal: 'left', vertical: 'middle' },
-          fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6E6FA' } },
+          alignment: { horizontal: 'left' as const, vertical: 'middle' as const },
+          fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE6E6FA' } },
           border: {
-            top: { style: 'thin' },
-            bottom: { style: 'thin' },
-            left: { style: 'thin' },
-            right: { style: 'thin' }
+            top: { style: 'thin' as const },
+            bottom: { style: 'thin' as const },
+            left: { style: 'thin' as const },
+            right: { style: 'thin' as const }
           }
         }
         
@@ -538,13 +538,13 @@ function App() {
            if (header) {
              cell.style = {
                font: { bold: true },
-               alignment: { horizontal: 'center', vertical: 'middle' },
-               fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6E6FA' } },
+               alignment: { horizontal: 'center' as const, vertical: 'middle' as const },
+               fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE6E6FA' } },
                border: {
-                 top: { style: 'thin' },
-                 bottom: { style: 'thin' },
-                 left: { style: 'thin' },
-                 right: { style: 'thin' }
+                 top: { style: 'thin' as const },
+                 bottom: { style: 'thin' as const },
+                 left: { style: 'thin' as const },
+                 right: { style: 'thin' as const }
                }
              }
            }
@@ -580,13 +580,13 @@ function App() {
          worksheet.getCell('C7').value = data.area || 'Lab'
          // Style Area cell to position text at top to avoid image overlap
          worksheet.getCell('C7').style = {
-           alignment: { horizontal: 'center', vertical: 'top' },
+           alignment: { horizontal: 'center' as const, vertical: 'top' as const },
            font: { bold: true }
          }
          worksheet.getCell('D7').value = data.product_name || 'Mlight Kleo X 58'
          // Style Product cell normally
          worksheet.getCell('D7').style = {
-           alignment: { horizontal: 'center', vertical: 'middle' },
+           alignment: { horizontal: 'center' as const, vertical: 'middle' as const },
            font: { bold: true }
          }
          worksheet.getCell('F7').value = ''  // Photometry data will go here
@@ -600,7 +600,7 @@ function App() {
            const cell = worksheet.getCell(cellRef)
            cell.style = {
              ...cell.style,
-             alignment: { horizontal: 'center', vertical: 'middle' }
+             alignment: { horizontal: 'center' as const, vertical: 'middle' as const }
            }
          })
          }
@@ -674,30 +674,30 @@ function App() {
 
            worksheet.getCell(`D${row}`).style = {
              font: { bold: true },
-             alignment: { horizontal: 'center', vertical: 'middle' }
+             alignment: { horizontal: 'center' as const, vertical: 'middle' as const }
            }
            
            // Style specification values with white background - centered
            worksheet.getCell(`E${row}`).style = {
-             alignment: { horizontal: 'center', vertical: 'middle' },
-             fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } },
+             alignment: { horizontal: 'center' as const, vertical: 'middle' as const },
+             fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFFFFFFF' } },
              border: {
-               top: { style: 'thin', color: { argb: 'FFCCCCCC' } },
-               bottom: { style: 'thin', color: { argb: 'FFCCCCCC' } },
-               left: { style: 'thin', color: { argb: 'FFCCCCCC' } },
-               right: { style: 'thin', color: { argb: 'FFCCCCCC' } }
+               top: { style: 'thin' as const, color: { argb: 'FFCCCCCC' } },
+               bottom: { style: 'thin' as const, color: { argb: 'FFCCCCCC' } },
+               left: { style: 'thin' as const, color: { argb: 'FFCCCCCC' } },
+               right: { style: 'thin' as const, color: { argb: 'FFCCCCCC' } }
              }
            }
            
            // Style the extra column with light background - centered
            worksheet.getCell(`G${row}`).style = {
-             alignment: { horizontal: 'center', vertical: 'middle' },
-             fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8F8F8' } }
+             alignment: { horizontal: 'center' as const, vertical: 'middle' as const },
+             fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFF8F8F8' } }
            }
 
            worksheet.getCell(`F${row}`).style = {
              font: { bold: true },
-             alignment: { horizontal: 'center', vertical: 'middle' }
+             alignment: { horizontal: 'center' as const, vertical: 'middle' as const }
            }
           })
           }
@@ -819,8 +819,8 @@ function App() {
                  worksheet.getCell('C8').value = '🖼️ PRODUCT IMAGE'
                  worksheet.getCell('C8').note = `Product Image: ${result.url}`
                  worksheet.getCell('C8').style = {
-                   alignment: { horizontal: 'center', vertical: 'middle' },
-                   fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6F3FF' } },
+                   alignment: { horizontal: 'center' as const, vertical: 'middle' as const },
+                   fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFE6F3FF' } },
                    font: { bold: true, color: { argb: 'FF0066CC' } }
                  }
                } else if (result.type === 'dimension') {
@@ -830,8 +830,8 @@ function App() {
                  worksheet.getCell('F7').value = '📊 PHOTOMETRY'
                  worksheet.getCell('F7').note = `Photometry: ${result.url}`
                  worksheet.getCell('F7').style = {
-                   alignment: { horizontal: 'center', vertical: 'middle' },
-                   fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF0E6' } },
+                   alignment: { horizontal: 'center' as const, vertical: 'middle' as const },
+                   fill: { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFFFF0E6' } },
                    font: { bold: true, color: { argb: 'FFCC6600' } }
                  }
                }
@@ -937,14 +937,14 @@ function App() {
   const preprocessMarkdown = useCallback((text: string): { content: string; excelData?: any; filename?: string } => {
     let processed = text
     let excelData = null
-    let filename = null
+    let filename: string | undefined = undefined
     
     // IMMEDIATE FIX: Convert any "View Portfolio Image" text to proper markdown FIRST
     if (processed.includes('View Portfolio Image')) {
       console.log('🚨 IMMEDIATE FIX: Found View Portfolio text, converting...')
       processed = processed.replace(/View Portfolio Image 1/g, '![Portfolio 1](https://picsum.photos/600/400?random=1)')
       processed = processed.replace(/View Portfolio Image 2/g, '![Portfolio 2](https://picsum.photos/600/400?random=2)')
-      processed = processed.replace(/View Portfolio Image (\d+)/g, (match, num) => {
+      processed = processed.replace(/View Portfolio Image (\d+)/g, (_, num) => {
         return `![Portfolio ${num}](https://picsum.photos/600/400?random=${num})`
       })
       console.log('✅ IMMEDIATE FIX: Conversion complete')
