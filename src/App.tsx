@@ -2,6 +2,11 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import * as ExcelJS from 'exceljs'
 import './App.css'
+import AdminConsole from './AdminConsole'
+import UploadPage from './UploadPage'
+import { supabase } from './lib/supabaseClient'
+import pkg from '../package.json'
+import type { User } from '@supabase/supabase-js'
 
 interface Message {
   id: string
@@ -469,7 +474,12 @@ function App() {
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [hamburgerOpen, setHamburgerOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState<'chat' | 'admin' | 'upload'>('chat')
+  const [authOpen, setAuthOpen] = useState(false)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const hamburgerRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -478,6 +488,43 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Close hamburger dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (hamburgerRef.current && !hamburgerRef.current.contains(event.target as Node)) {
+        setHamburgerOpen(false)
+      }
+    }
+
+    if (hamburgerOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [hamburgerOpen])
+
+  // Supabase Auth: initialize user and listen for auth state changes
+  useEffect(() => {
+    let mounted = true
+    supabase.auth.getUser().then(({ data }) => {
+      if (mounted) setCurrentUser(data.user ?? null)
+    })
+    const { data: sub } = supabase.auth.onAuthStateChange((_, session) => {
+      setCurrentUser(session?.user ?? null)
+    })
+    return () => {
+      mounted = false
+      sub.subscription.unsubscribe()
+    }
+  }, [])
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    setAuthOpen(false)
+  }
 
     // Excel Download Component with Real Image Embedding
   const ExcelDownload = React.memo<{ data: any; filename: string }>(({ data, filename }) => {
@@ -1147,158 +1194,247 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-gray-50 to-white overflow-hidden w-full max-w-full">
-      {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} fixed inset-y-0 left-0 z-50 w-80 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
-        <div className="flex flex-col h-full">
-                     {/* History Section */}
-           <div className="p-4 border-b border-gray-200 shadow-sm">
-             <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide bg-gray-50 p-2 rounded-md shadow-sm">HISTORY</h2>
-             <div className="mt-4 space-y-2">
-               {/* Add some mock history items if needed */}
-             </div>
-        </div>
-          
-          {/* News Section */}
-          <div className="flex-1 overflow-y-auto p-4">
-                          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-6 bg-gray-50 p-2 rounded-md shadow-sm">BERITA HARI INI</h2>
-            <div className="space-y-6">
-              {mockNews.map((news) => (
-                <div key={news.id} className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
-                  <img 
-                    src={news.image} 
-                    alt={news.title}
-                    className="w-full h-32 object-cover"
-                  />
-                  <div className="p-4">
-                    <h3 className="text-sm font-semibold text-gray-900 leading-tight mb-3">{news.title}</h3>
-                    <p className="text-xs text-blue-600 font-medium hover:text-blue-800 cursor-pointer">{news.readTime}</p>
-                  </div>
-                        </div>
-              ))}
-                    </div>
-                    </div>
-                  </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col lg:ml-0 overflow-hidden min-w-0">
-                 {/* Header */}
-         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
-          {/* Logo */}
-          <div className="flex items-center">
-                         <button
-               onClick={() => setSidebarOpen(!sidebarOpen)}
-               className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
-             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
+    <div className="flex flex-col h-screen bg-gradient-to-br from-gray-50 to-white overflow-hidden w-full max-w-full">
+      {/* Admin Console */}
+      {currentPage === 'admin' && (
+        <div className="w-full">
+          {/* Back Button */}
+          <div className="absolute top-4 left-4 z-50">
+            <button
+              onClick={() => setCurrentPage('chat')}
+              className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-lg"
+            >
+              <span>←</span>
+              Back to Chat
             </button>
-                         <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
-               LIGHT<br />TALK
+          </div>
+          <AdminConsole />
+        </div>
+      )}
+
+      {/* Upload Page */}
+      {currentPage === 'upload' && (
+        <UploadPage onBack={() => setCurrentPage('chat')} />
+      )}
+
+      {/* Chat Interface */}
+      {currentPage === 'chat' && (
+        <>
+          {/* Full-width Header */}
+          <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
+            {/* Logo + Mobile sidebar toggle */}
+            <div className="flex items-center">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
+                LIGHT<br />TALK
+              </div>
+            </div>
+
+            {/* Right controls */}
+            <div className="relative" ref={hamburgerRef}>
+              <button 
+                onClick={() => setHamburgerOpen(!hamburgerOpen)}
+                className="p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+
+              {/* Dropdown Menu */}
+              {hamburgerOpen && (
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
+                  <button 
+                    onClick={() => setCurrentPage('admin')}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="mr-2">⚙️</span>
+                    Admin Console
+                  </button>
+                  <button 
+                    onClick={() => setCurrentPage('upload')}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="mr-2">⬆️</span>
+                    Upload Files
+                  </button>
+                  <button className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+                    <span className="mr-2">📊</span>
+                    Analytics
+                  </button>
+                  <button className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+                    <span className="mr-2">🔧</span>
+                    Settings
+                  </button>
+                  <hr className="my-1 border-gray-200" />
+                  <button className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+                    <span className="mr-2">❓</span>
+                    Help
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Auth controls */}
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-gray-600">v{pkg.version}</span>
+              {currentUser ? (
+                <button
+                  onClick={handleSignOut}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 text-sm font-medium shadow-md hover:shadow-lg transition-shadow"
+                >
+                  Sign out
+                </button>
+              ) : (
+                <button
+                  onClick={() => setAuthOpen(true)}
+                  aria-label="Open login"
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 text-sm font-medium shadow-md hover:shadow-lg transition-shadow"
+                >
+                  LOGIN
+                </button>
+              )}
+            </div>
+          </header>
+
+          {/* Content Row: Main + Sidebar (news on the right) */}
+          <div className="flex flex-1 overflow-hidden min-w-0">
+            {/* Main Content */}
+            <div className="flex-1 flex flex-col overflow-hidden min-w-0 lg:ml-0">
+              {/* Chat Messages */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 w-full">
+                <div className="max-w-4xl mx-auto w-full">
+                  {messages.map((message) => (
+                    <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} />
+                  ))}
+                  {isLoading && <LoadingIndicator />}
+                  <div ref={messagesEndRef} />
                 </div>
               </div>
 
-                     {/* Hamburger Menu */}
-           <button className="p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm hover:shadow-md transition-shadow">
-             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-             </svg>
-           </button>
+              {/* Chat Input */}
+              <div className="p-4 border-t border-gray-200 shadow-lg">
+                <div className="max-w-4xl mx-auto">
+                  <form onSubmit={handleSubmit} className="relative">
+                    <textarea
+                      value={inputValue}
+                      onChange={(e) => setInputValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSubmit(e)
+                        } else if (e.key === 'Tab' && e.shiftKey) {
+                          e.preventDefault()
+                          const textarea = e.target as HTMLTextAreaElement
+                          const start = textarea.selectionStart
+                          const end = textarea.selectionEnd
+                          const newValue = inputValue.substring(0, start) + '\n' + inputValue.substring(end)
+                          setInputValue(newValue)
+                          setTimeout(() => {
+                            textarea.selectionStart = textarea.selectionEnd = start + 1
+                          }, 0)
+                        }
+                      }}
+                      placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
+                      className="w-full border border-gray-300 rounded-2xl px-6 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-md focus:shadow-lg transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
+                      disabled={isLoading}
+                      rows={1}
+                      style={{
+                        height: 'auto',
+                        minHeight: '3rem'
+                      }}
+                      onInput={(e) => {
+                        const textarea = e.target as HTMLTextAreaElement
+                        textarea.style.height = 'auto'
+                        textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      disabled={!inputValue.trim() || isLoading}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
+                    >
+                      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2ZM21 9V7L15 1H5C3.9 1 3 1.9 3 3V21C3 22.1 3.9 23 5 23H19C20.1 23 21 22.1 21 21V9H21ZM12 18C8.69 18 6 15.31 6 12S8.69 6 12 6S18 8.69 18 12S15.31 18 12 18Z"/>
+                        <path d="M12 8C10.9 8 10 8.9 10 10V14C10 15.1 10.9 16 12 16S14 15.1 14 14V10C14 8.9 13.1 8 12 8Z"/>
+                      </svg>
+                    </button>
+                  </form>
 
-                     {/* Login Button */}
-           <button className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 text-sm font-medium shadow-md hover:shadow-lg transition-shadow">
-             LOGIN
-           </button>
-        </header>
-
-        {/* Chat Messages */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 w-full">
-          <div className="max-w-4xl mx-auto w-full">
-            {messages.map((message) => (
-              <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} />
-            ))}
-            
-            {/* Loading indicator */}
-            {isLoading && <LoadingIndicator />}
-            
-            <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-        {/* Chat Input */}
-        <div className="p-4 border-t border-gray-200 shadow-lg">
-        <div className="max-w-4xl mx-auto">
-          <form onSubmit={handleSubmit} className="relative">
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSubmit(e)
-                  } else if (e.key === 'Tab' && e.shiftKey) {
-                    e.preventDefault()
-                    const textarea = e.target as HTMLTextAreaElement
-                    const start = textarea.selectionStart
-                    const end = textarea.selectionEnd
-                    const newValue = inputValue.substring(0, start) + '\n' + inputValue.substring(end)
-                    setInputValue(newValue)
-                    // Set cursor position after the new line
-                    setTimeout(() => {
-                      textarea.selectionStart = textarea.selectionEnd = start + 1
-                    }, 0)
-                  }
-                }}
-                placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
-                className="w-full border border-gray-300 rounded-2xl px-6 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-md focus:shadow-lg transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
-                disabled={isLoading}
-              rows={1}
-                style={{
-                  height: 'auto',
-                  minHeight: '3rem'
-                }}
-                onInput={(e) => {
-                  const textarea = e.target as HTMLTextAreaElement
-                  textarea.style.height = 'auto'
-                  textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
-                }}
-            />
-            <button
-              type="submit"
-              disabled={!inputValue.trim() || isLoading}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
-              >
-                <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2ZM21 9V7L15 1H5C3.9 1 3 1.9 3 3V21C3 22.1 3.9 23 5 23H19C20.1 23 21 22.1 21 21V9H21ZM12 18C8.69 18 6 15.31 6 12S8.69 6 12 6S18 8.69 18 12S15.31 18 12 18Z"/>
-                  <path d="M12 8C10.9 8 10 8.9 10 10V14C10 15.1 10.9 16 12 16S14 15.1 14 14V10C14 8.9 13.1 8 12 8Z"/>
-              </svg>
-            </button>
-          </form>
-            
-            {/* Additional context text */}
-            <div className="mt-3 px-4">
-              <div className="text-xs text-gray-400 text-center mb-2">
-                Press Enter to send • Shift+Tab for new line
+                  {/* Additional context text */}
+                  <div className="mt-3 px-4">
+                    <div className="text-xs text-gray-400 text-center mb-2">
+                      Press Enter to send • Shift+Tab for new line
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                      Artificial intelligent chat ini diperuntukan bagi mereka yang memerlukan informasi yang lebih dalam dan lebih akurat mengenai seluruh aspek lighting. Walupun dikembangkan dengan spesialisasi di bidang lighting arsitektur di Indonesia, tetapi topik diskusi tetap buka, juga berkolaborasi dengan berbagai aspek teknik lain dan topik yang bersangguatan.
+                    </p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      Sebagaimana esensi proses dari <em>machine learning</em>, tetap dibutuhkan sebuah rangkaian proses yang berkelanjutan sampai menemukan kesempurnaan. Dalam proses tersebut, ada komunikasi jawaban yang kurang akurat. Apabila ada jawaban yang dirasa kurang sesuai, silakan kontak : <span className="text-blue-600">atbc@efgh.com</span>
+                    </p>
+                  </div>
+                </div>
               </div>
-              <p className="text-xs text-gray-500 leading-relaxed">
-                Artificial intelligent chat ini diperuntukan bagi mereka yang memerlukan informasi yang lebih dalam dan lebih akurat mengenai seluruh aspek lighting. Walupun dikembangkan dengan spesialisasi di bidang lighting arsitektur di Indonesia, tetapi topik diskusi tetap buka, juga berkolaborasi dengan berbagai aspek teknik lain dan topik yang bersangguatan.
-              </p>
-              <p className="text-xs text-gray-500 mt-2">
-                Sebagaimana esensi proses dari <em>machine learning</em>, tetap dibutuhkan sebuah rangkaian proses yang berkelanjutan sampai menemukan kesempurnaan. Dalam proses tersebut, ada komunikasi jawaban yang kurang akurat. Apabila ada jawaban yang dirasa kurang sesuai, silakan kontak : <span className="text-blue-600">atbc@efgh.com</span>
-              </p>
+            </div>
+
+            {/* Sidebar (slides from right on mobile) */}
+            <div className={`${sidebarOpen ? 'translate-x-0' : 'translate-x-full'} fixed inset-y-0 right-0 z-50 w-80 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
+              <div className="flex flex-col h-full">
+                {/* News Section */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-6 bg-gray-50 p-2 rounded-md shadow-sm">BERITA HARI INI</h2>
+                  <div className="space-y-6">
+                    {mockNews.map((news) => (
+                      <div key={news.id} className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
+                        <img 
+                          src={news.image} 
+                          alt={news.title}
+                          className="w-full h-32 object-cover"
+                        />
+                        <div className="p-4">
+                          <h3 className="text-sm font-semibold text-gray-900 leading-tight mb-3">{news.title}</h3>
+                          <p className="text-xs text-blue-600 font-medium hover:text-blue-800 cursor-pointer">{news.readTime}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Admin Console Section */}
+                  <div className="mt-8">
+                    <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4 bg-gray-50 p-2 rounded-md shadow-sm">ADMIN</h2>
+                    <button 
+                      onClick={() => setCurrentPage('admin')}
+                      className="w-full bg-red-600 text-white px-4 py-3 rounded-lg hover:bg-red-700 transition-colors font-medium shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+                    >
+                      <span>⚙️</span>
+                      Admin Console
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Overlay for mobile sidebar */}
-      {sidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
+          {/* Overlay for mobile sidebar */}
+          {sidebarOpen && (
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+              onClick={() => setSidebarOpen(false)}
+            />
+          )}
+        </>
+      )}
+
+      {/* Auth Modal */}
+      {authOpen && (
+        <AuthModal onClose={() => setAuthOpen(false)} />
       )}
     </div>
   )
@@ -1375,3 +1511,100 @@ const LoadingIndicator = React.memo(() => (
 ))
 
 export default App
+
+// Email/password auth with Register + Sign In
+const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [mode, setMode] = useState<'signin' | 'register'>('signin')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    setInfo(null)
+    setLoading(true)
+    try {
+      if (mode === 'signin') {
+        const { error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+        onClose()
+      } else {
+        if (password !== confirm) throw new Error('Passwords do not match')
+        const { data, error } = await supabase.auth.signUp({ email, password })
+        if (error) throw error
+        if (!data.session) {
+          setInfo('Registration successful. Check your email to confirm, then sign in.')
+        } else {
+          onClose()
+        }
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Authentication failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-sm p-5">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-gray-900">{mode === 'signin' ? 'Sign in' : 'Register'}</h2>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-gray-100">
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          {mode === 'register' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+              <input
+                type="password"
+                required
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
+          {error && <div className="text-sm text-red-600">{error}</div>}
+          {info && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{info}</div>}
+          <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white rounded-md px-3 py-2 text-sm disabled:bg-gray-300">
+            {loading ? (mode === 'signin' ? 'Signing in…' : 'Registering…') : (mode === 'signin' ? 'Sign in' : 'Register')}
+          </button>
+        </form>
+        <div className="mt-3 text-xs text-gray-600">
+          {mode === 'signin' ? (
+            <button className="underline" onClick={() => setMode('register')}>Create an account</button>
+          ) : (
+            <button className="underline" onClick={() => setMode('signin')}>Have an account? Sign in</button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
