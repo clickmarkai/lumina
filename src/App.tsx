@@ -474,12 +474,19 @@ function App() {
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [hamburgerOpen, setHamburgerOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState<'chat' | 'admin' | 'upload'>('chat')
+  const [navCollapsed, setNavCollapsed] = useState(true)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [newsSheetOpen, setNewsSheetOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const hamburgerRef = useRef<HTMLDivElement>(null)
+
+  // Roles / RBAC
+  const roles = Array.isArray((currentUser as any)?.app_metadata?.roles)
+    ? ((currentUser as any).app_metadata.roles as string[])
+    : []
+  const hasAdmin = roles.includes('admin')
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -489,22 +496,7 @@ function App() {
     scrollToBottom()
   }, [messages])
 
-  // Close hamburger dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (hamburgerRef.current && !hamburgerRef.current.contains(event.target as Node)) {
-        setHamburgerOpen(false)
-      }
-    }
-
-    if (hamburgerOpen) {
-      document.addEventListener('mousedown', handleClickOutside)
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [hamburgerOpen])
+  // Left navigation replaces top-right hamburger dropdown
 
   // Supabase Auth: initialize user and listen for auth state changes
   useEffect(() => {
@@ -1195,98 +1187,35 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-gradient-to-br from-gray-50 to-white overflow-hidden w-full max-w-full">
-      {/* Admin Console */}
-      {currentPage === 'admin' && (
-        <div className="w-full">
-          {/* Back Button */}
-          <div className="absolute top-4 left-4 z-50">
-            <button
-              onClick={() => setCurrentPage('chat')}
-              className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-lg"
-            >
-              <span>←</span>
-              Back to Chat
-            </button>
-          </div>
-          <AdminConsole />
-        </div>
-      )}
+      {/* Admin/Upload pages now render within main layout below */}
 
-      {/* Upload Page */}
-      {currentPage === 'upload' && (
-        <UploadPage onBack={() => setCurrentPage('chat')} />
-      )}
-
-      {/* Chat Interface */}
-      {currentPage === 'chat' && (
-        <>
+      {/* App Layout */}
+      <>
           {/* Full-width Header */}
-          <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
+         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
             {/* Logo + Mobile sidebar toggle */}
-            <div className="flex items-center">
-              <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-              <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
-                LIGHT<br />TALK
-              </div>
-            </div>
-
-            {/* Right controls */}
-            <div className="relative" ref={hamburgerRef}>
-              <button 
-                onClick={() => setHamburgerOpen(!hamburgerOpen)}
-                className="p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 shadow-sm hover:shadow-md transition-shadow"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
-                </svg>
-              </button>
-
-              {/* Dropdown Menu */}
-              {hamburgerOpen && (
-                <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 border border-gray-200">
-                  <button 
-                    onClick={() => setCurrentPage('admin')}
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                  >
-                    <span className="mr-2">⚙️</span>
-                    Admin Console
-                  </button>
-                  <button 
-                    onClick={() => setCurrentPage('upload')}
-                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-                  >
-                    <span className="mr-2">⬆️</span>
-                    Upload Files
-                  </button>
-                  <button className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-                    <span className="mr-2">📊</span>
-                    Analytics
-                  </button>
-                  <button className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-                    <span className="mr-2">🔧</span>
-                    Settings
-                  </button>
-                  <hr className="my-1 border-gray-200" />
-                  <button className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-                    <span className="mr-2">❓</span>
-                    Help
-                  </button>
+          <div className="flex items-center">
+                         <button
+               onClick={() => setMobileNavOpen(!mobileNavOpen)}
+               className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
+             >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+                         <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
+               LIGHT<br />TALK
                 </div>
-              )}
-            </div>
+              </div>
+
+            {/* Spacer (left nav handles navigation) */}
+            <div />
 
             {/* Auth controls */}
             <div className="flex items-center gap-3">
               <span className="text-xs text-gray-600">v{pkg.version}</span>
               {currentUser ? (
-                <button
+                       <button 
                   onClick={handleSignOut}
                   className="px-3 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 text-sm font-medium shadow-md hover:shadow-lg transition-shadow"
                 >
@@ -1304,84 +1233,283 @@ function App() {
             </div>
           </header>
 
-          {/* Content Row: Main + Sidebar (news on the right) */}
+          {/* Content Row: Left Nav + Main + Right News */}
           <div className="flex flex-1 overflow-hidden min-w-0">
+            {/* Mobile Nav Drawer (animated) */}
+            <div className="lg:hidden fixed inset-0 z-40 pointer-events-none">
+              <div className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${mobileNavOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0'}`} onClick={() => setMobileNavOpen(false)} />
+              <div className={`absolute inset-y-0 left-0 w-64 bg-white shadow-2xl p-3 transition-transform duration-300 ease-in-out ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'} pointer-events-auto flex flex-col`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="font-semibold text-gray-800">Menu</div>
+                  <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="p-2 rounded-md text-gray-600 hover:bg-gray-100">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                </div>
+                <nav className="space-y-1 flex-1 overflow-y-auto">
+                  <button 
+                    onClick={() => { setCurrentPage('chat'); setMobileNavOpen(false) }} 
+                    aria-current={currentPage === 'chat' ? 'page' : undefined}
+                    className={`${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
+                    <span>Chat</span>
+                  </button>
+                  <button 
+                    onClick={() => { setNewsSheetOpen(true); setMobileNavOpen(false) }} 
+                    className="flex items-center gap-3 w-full px-2 py-2 rounded-md text-gray-700 hover:bg-gray-50"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h10"/></svg>
+                    <span>News</span>
+                  </button>
+                  {hasAdmin && (
+                    <button 
+                      onClick={() => { setCurrentPage('upload'); setMobileNavOpen(false) }} 
+                      aria-current={currentPage === 'upload' ? 'page' : undefined}
+                      className={`${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
+                      <span>Upload Files</span>
+                    </button>
+                  )}
+                  {hasAdmin && (
+                    <button 
+                      onClick={() => { setCurrentPage('admin'); setMobileNavOpen(false) }} 
+                      aria-current={currentPage === 'admin' ? 'page' : undefined}
+                      className={`${currentPage === 'admin' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 3a.75.75 0 00-.75.75V6H6.75A.75.75 0 006 6.75v2.5a.75.75 0 00.75.75H9v2.5H6.75a.75.75 0 00-.75.75v2.5c0 .414.336.75.75.75H9v2.25c0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75V18h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15v-2.5h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15V3.75a.75.75 0 00-.75-.75h-4.5z"/></svg>
+                      <span>Admin Console</span>
+                    </button>
+                  )}
+                </nav>
+                <div className="border-t border-gray-200 pt-2 mt-2">
+                  {currentUser ? (
+                    <div className="flex items-start gap-2">
+                      <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium">
+                        {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
+                        {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
+                          <div className="mt-0.5 flex flex-wrap gap-1">
+                            {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
+                              <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
+                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                          >
+                            Copy email
+                          </button>
+                          <button
+                            onClick={async () => { await handleSignOut(); setMobileNavOpen(false); }}
+                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                          >
+                            Sign out
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm text-gray-600">Not signed in</div>
+                      <button
+                        onClick={() => { setAuthOpen(true); setMobileNavOpen(false); }}
+                        className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                      >
+                        Sign in
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            {/* Left Navigation (collapsible) */}
+            <div className={`hidden lg:flex flex-col bg-white border-r border-gray-200 transition-all duration-200 ${navCollapsed ? 'w-16' : 'w-60'}`}>
+              <button
+                onClick={() => setNavCollapsed(!navCollapsed)}
+                aria-label="Toggle navigation"
+                className={`m-2 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100`}
+                title={navCollapsed ? 'Expand' : 'Collapse'}
+                       >
+                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h7" />
+                         </svg>
+                       </button>
+              <nav className="flex-1 px-2 pb-2 space-y-1">
+                <button
+                  onClick={() => setCurrentPage('chat')}
+                  aria-current={currentPage === 'chat' ? 'page' : undefined}
+                  className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                  title="Chat"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
+                  <span className={navCollapsed ? 'hidden' : ''}>Chat</span>
+                </button>
+                {hasAdmin && (
+                  <button
+                    onClick={() => setCurrentPage('upload')}
+                    aria-current={currentPage === 'upload' ? 'page' : undefined}
+                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                    title="Upload Files"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
+                    <span className={navCollapsed ? 'hidden' : ''}>Upload Files</span>
+                  </button>
+                )}
+                           {hasAdmin && (
+                             <button 
+                               onClick={() => setCurrentPage('admin')}
+                    aria-current={currentPage === 'admin' ? 'page' : undefined}
+                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'admin' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                    title="Admin Console"
+                             >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 3a.75.75 0 00-.75.75V6H6.75A.75.75 0 006 6.75v2.5a.75.75 0 00.75.75H9v2.5H6.75a.75.75 0 00-.75.75v2.5c0 .414.336.75.75.75H9v2.25c0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75V18h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15v-2.5h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15V3.75a.75.75 0 00-.75-.75h-4.5z"/></svg>
+                    <span className={navCollapsed ? 'hidden' : ''}>Admin Console</span>
+                             </button>
+                           )}
+                {/* Removed non-functional links on desktop */}
+              </nav>
+              <div className={`border-t border-gray-200 pt-2 mt-2 pb-2 ${navCollapsed ? 'px-2' : 'px-2'}`}>
+                {currentUser ? (
+                  <div className={`flex items-start w-full ${navCollapsed ? 'justify-center gap-0' : 'gap-2'}`}>
+                    <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium" title={currentUser.email || ''}>
+                      {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
+                    </div>
+                    {!navCollapsed && (
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
+                        {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
+                          <div className="mt-0.5 flex flex-wrap gap-1">
+                            {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
+                              <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
+                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                          >
+                            Copy email
+                          </button>
+                          <button
+                            onClick={async () => { await handleSignOut(); }}
+                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                          >
+                            Sign out
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className={`${navCollapsed ? 'flex items-center justify-center' : 'flex items-center justify-between'}`}>
+                    <div className="text-sm text-gray-600">{navCollapsed ? '' : 'Not signed in'}</div>
+                    {!navCollapsed && (
+                      <button
+                        onClick={() => { setAuthOpen(true); }}
+                        className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                      >
+                        Sign in
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+                         </div>
             {/* Main Content */}
             <div className="flex-1 flex flex-col overflow-hidden min-w-0 lg:ml-0">
-              {/* Chat Messages */}
-              <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 w-full">
-                <div className="max-w-4xl mx-auto w-full">
-                  {messages.map((message) => (
-                    <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} />
-                  ))}
-                  {isLoading && <LoadingIndicator />}
-                  <div ref={messagesEndRef} />
-                </div>
-              </div>
-
-              {/* Chat Input */}
-              <div className="p-4 border-t border-gray-200 shadow-lg">
-                <div className="max-w-4xl mx-auto">
-                  <form onSubmit={handleSubmit} className="relative">
-                    <textarea
-                      value={inputValue}
-                      onChange={(e) => setInputValue(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          handleSubmit(e)
-                        } else if (e.key === 'Tab' && e.shiftKey) {
-                          e.preventDefault()
-                          const textarea = e.target as HTMLTextAreaElement
-                          const start = textarea.selectionStart
-                          const end = textarea.selectionEnd
-                          const newValue = inputValue.substring(0, start) + '\n' + inputValue.substring(end)
-                          setInputValue(newValue)
-                          setTimeout(() => {
-                            textarea.selectionStart = textarea.selectionEnd = start + 1
-                          }, 0)
-                        }
-                      }}
-                      placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
-                      className="w-full border border-gray-300 rounded-2xl px-6 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-md focus:shadow-lg transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
-                      disabled={isLoading}
-                      rows={1}
-                      style={{
-                        height: 'auto',
-                        minHeight: '3rem'
-                      }}
-                      onInput={(e) => {
-                        const textarea = e.target as HTMLTextAreaElement
-                        textarea.style.height = 'auto'
-                        textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
-                      }}
-                    />
-                    <button
-                      type="submit"
-                      disabled={!inputValue.trim() || isLoading}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
-                    >
-                      <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2ZM21 9V7L15 1H5C3.9 1 3 1.9 3 3V21C3 22.1 3.9 23 5 23H19C20.1 23 21 22.1 21 21V9H21ZM12 18C8.69 18 6 15.31 6 12S8.69 6 12 6S18 8.69 18 12S15.31 18 12 18Z"/>
-                        <path d="M12 8C10.9 8 10 8.9 10 10V14C10 15.1 10.9 16 12 16S14 15.1 14 14V10C14 8.9 13.1 8 12 8Z"/>
-                      </svg>
-                    </button>
-                  </form>
-
-                  {/* Additional context text */}
-                  <div className="mt-3 px-4">
-                    <div className="text-xs text-gray-400 text-center mb-2">
-                      Press Enter to send • Shift+Tab for new line
+              {currentPage === 'chat' && (
+                <>
+                  {/* Chat Messages */}
+                  <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-28 w-full">
+                    <div className="max-w-4xl mx-auto w-full">
+                      {messages.map((message) => (
+                        <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} userInitial={currentUser?.email?.slice(0,1)?.toUpperCase() || 'U'} />
+                      ))}
+                      {isLoading && <LoadingIndicator />}
+                      <div ref={messagesEndRef} />
                     </div>
-                    <p className="text-xs text-gray-500 leading-relaxed">
-                      Artificial intelligent chat ini diperuntukan bagi mereka yang memerlukan informasi yang lebih dalam dan lebih akurat mengenai seluruh aspek lighting. Walupun dikembangkan dengan spesialisasi di bidang lighting arsitektur di Indonesia, tetapi topik diskusi tetap buka, juga berkolaborasi dengan berbagai aspek teknik lain dan topik yang bersangguatan.
-                    </p>
-                    <p className="text-xs text-gray-500 mt-2">
-                      Sebagaimana esensi proses dari <em>machine learning</em>, tetap dibutuhkan sebuah rangkaian proses yang berkelanjutan sampai menemukan kesempurnaan. Dalam proses tersebut, ada komunikasi jawaban yang kurang akurat. Apabila ada jawaban yang dirasa kurang sesuai, silakan kontak : <span className="text-blue-600">atbc@efgh.com</span>
-                    </p>
                   </div>
-                </div>
-              </div>
+
+                  {/* Chat Input */}
+                  <div className={`fixed bottom-0 p-4 z-20 lg:z-40 left-0 right-0 ${navCollapsed ? 'lg:left-16' : 'lg:left-60'} lg:right-80`}>
+                    <div className="max-w-4xl mx-auto">
+                      <div className="border border-gray-200 bg-white/90 backdrop-blur rounded-2xl shadow-xl p-2">
+                        <form onSubmit={handleSubmit} className="relative">
+                          <textarea
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault()
+                                handleSubmit(e)
+                              } else if (e.key === 'Tab' && e.shiftKey) {
+                                e.preventDefault()
+                                const textarea = e.target as HTMLTextAreaElement
+                                const start = textarea.selectionStart
+                                const end = textarea.selectionEnd
+                                const newValue = inputValue.substring(0, start) + '\n' + inputValue.substring(end)
+                                setInputValue(newValue)
+                                setTimeout(() => {
+                                  textarea.selectionStart = textarea.selectionEnd = start + 1
+                                }, 0)
+                              }
+                            }}
+                            placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
+                            className="w-full border border-gray-300 rounded-2xl px-6 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
+                            disabled={isLoading}
+                            rows={1}
+                            style={{ height: 'auto', minHeight: '3rem' }}
+                            onInput={(e) => {
+                              const textarea = e.target as HTMLTextAreaElement
+                              textarea.style.height = 'auto'
+                              textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
+                            }}
+                          />
+                          <button
+                            type="submit"
+                            disabled={!inputValue.trim() || isLoading}
+                            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
+                          >
+                            <svg className="w-6 h-6 transform -translate-y-0.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                            </svg>
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {currentPage !== 'chat' && currentPage === 'upload' && (
+                hasAdmin ? (
+                  <div className="flex-1 overflow-y-auto p-4 w-full">
+                    <UploadPage onBack={() => setCurrentPage('chat')} />
+                  </div>
+                ) : (
+                  <div className="flex-1 p-6 w-full flex items-center justify-center">
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                  </div>
+                )
+              )}
+
+              {currentPage !== 'chat' && currentPage === 'admin' && (
+                hasAdmin ? (
+                  <div className="flex-1 overflow-y-auto w-full">
+                    <AdminConsole />
+                  </div>
+                ) : (
+                  <div className="flex-1 p-6 w-full flex items-center justify-center">
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                  </div>
+                )
+              )}
             </div>
 
             {/* Sidebar (slides from right on mobile) */}
@@ -1406,45 +1534,70 @@ function App() {
                     ))}
                   </div>
 
-                  {/* Admin Console Section */}
-                  <div className="mt-8">
-                    <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-4 bg-gray-50 p-2 rounded-md shadow-sm">ADMIN</h2>
-                    <button 
-                      onClick={() => setCurrentPage('admin')}
-                      className="w-full bg-red-600 text-white px-4 py-3 rounded-lg hover:bg-red-700 transition-colors font-medium shadow-md hover:shadow-lg flex items-center justify-center gap-2"
-                    >
-                      <span>⚙️</span>
-                      Admin Console
-                    </button>
-                  </div>
-                </div>
-              </div>
+                  {/* Admin section removed per request */}
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Overlay for mobile sidebar */}
-          {sidebarOpen && (
-            <div 
-              className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
-              onClick={() => setSidebarOpen(false)}
-            />
-          )}
-        </>
+      {/* Overlay for mobile sidebar */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
+      </>
 
       {/* Auth Modal */}
       {authOpen && (
         <AuthModal onClose={() => setAuthOpen(false)} />
       )}
+
+      {/* Mobile News Bottom Sheet */}
+      <div className="lg:hidden fixed inset-0 z-50 pointer-events-none">
+        {/* Backdrop */}
+        <div
+          className={`absolute inset-0 bg-black/40 transition-opacity duration-300 ${newsSheetOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0'}`}
+          onClick={() => setNewsSheetOpen(false)}
+        />
+        {/* Sheet */}
+        <div
+          className={`absolute left-0 right-0 bottom-0 bg-white rounded-t-2xl shadow-2xl transition-transform duration-300 ease-in-out pointer-events-auto ${newsSheetOpen ? 'translate-y-0' : 'translate-y-full'}`}
+          style={{ maxHeight: '75vh' }}
+        >
+          <div className="p-3 border-b border-gray-200 flex items-center justify-between">
+            <div className="w-10 h-1.5 bg-gray-300 rounded-full mx-auto absolute left-1/2 -translate-x-1/2 top-2" />
+            <h3 className="text-sm font-semibold text-gray-800">BERITA HARI INI</h3>
+            <button onClick={() => setNewsSheetOpen(false)} aria-label="Close" className="p-2 rounded-md text-gray-600 hover:bg-gray-100">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(75vh - 48px)' }}>
+            <div className="space-y-6">
+              {mockNews.map((news) => (
+                <div key={news.id} className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
+                  <img src={news.image} alt={news.title} className="w-full h-32 object-cover" />
+                  <div className="p-4">
+                    <h4 className="text-sm font-semibold text-gray-900 leading-tight mb-2">{news.title}</h4>
+                    <p className="text-xs text-blue-600 font-medium">{news.readTime}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
 // Memoized message container component
-const MessageContainer = React.memo(({ message, preprocessMarkdown, ExcelDownload }: { 
+const MessageContainer = React.memo(({ message, preprocessMarkdown, ExcelDownload, userInitial }: { 
   message: Message; 
   preprocessMarkdown: (text: string) => { content: string; excelData?: any; filename?: string };
-  ExcelDownload: React.ComponentType<{ data: any; filename: string }>
+  ExcelDownload: React.ComponentType<{ data: any; filename: string }>,
+  userInitial: string
 }) => {
   if (message.role === 'assistant') {
     return (
@@ -1472,9 +1625,9 @@ const MessageContainer = React.memo(({ message, preprocessMarkdown, ExcelDownloa
   return (
     <div className="flex justify-end mb-4 w-full">
       <div className="flex max-w-[90%] lg:max-w-[85%] gap-3 flex-row-reverse min-w-0">
-        {/* User Avatar */}
-        <div className="w-8 h-8 min-w-[2rem] min-h-[2rem] flex-shrink-0 rounded-full bg-gray-600 flex items-center justify-center text-white text-sm font-medium shadow-md">
-          U
+        {/* User Avatar (match hamburger menu) */}
+        <div className="w-8 h-8 min-w-[2rem] min-h-[2rem] flex-shrink-0 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 text-sm font-medium shadow-md">
+          {userInitial}
         </div>
         
         {/* Message Content */}
