@@ -1,8 +1,7 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
-import * as ExcelJS from 'exceljs'
+import React, { useState, useRef, useEffect, useMemo, useCallback, Suspense } from 'react'
+const ReactMarkdown = React.lazy(() => import('react-markdown'))
+// ExcelJS is dynamically imported where needed to enable code-splitting
 import './App.css'
-// AdminConsole removed
 import DocumentVisibility from './DocumentVisibility'
 import UploadPage from './UploadPage'
 import { supabase } from './lib/supabaseClient'
@@ -65,12 +64,11 @@ const MarkdownRenderer = React.memo(({ content, preprocessMarkdown, ExcelDownloa
         <ExcelDownload data={processedData.excelData} filename={processedData.filename} />
       )}
       {markdownContent && (
-        <>
-
+        <Suspense fallback={<div className="text-xs text-gray-500">Rendering…</div>}>
           <ReactMarkdown components={markdownComponents}>
             {markdownContent}
           </ReactMarkdown>
-        </>
+        </Suspense>
       )}
     </div>
   )
@@ -475,7 +473,7 @@ function App() {
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState<'chat' | 'admin' | 'upload' | 'visibility'>('chat')
+  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility'>('chat')
   const [navCollapsed, setNavCollapsed] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newsSheetOpen, setNewsSheetOpen] = useState(false)
@@ -525,6 +523,9 @@ function App() {
       try {
         console.log('🔄 Starting Excel generation...')
         
+        // Dynamically import ExcelJS to reduce initial bundle size
+        const ExcelModule = await import('exceljs')
+        const ExcelJS = ExcelModule as unknown as { Workbook: new () => any }
         // Create new workbook
         const workbook = new ExcelJS.Workbook()
         const worksheet = workbook.addWorksheet('Product Specification')
@@ -906,7 +907,9 @@ function App() {
           // Fallback: Create a simpler Excel without images
           try {
             console.log('🔄 Attempting fallback Excel generation...')
-            const fallbackWorkbook = new ExcelJS.Workbook()
+            const ExcelModule2 = await import('exceljs')
+            const ExcelJS2 = ExcelModule2 as unknown as { Workbook: new () => any }
+            const fallbackWorkbook = new ExcelJS2.Workbook()
             const fallbackWorksheet = fallbackWorkbook.addWorksheet('Product Data')
             
             // Simple data layout
@@ -1007,26 +1010,23 @@ function App() {
         
         console.log('🔧 Extracted JSON string:', jsonString.substring(0, 100) + '...')
         
-        // Use eval to parse JavaScript object literal (safer than regex fixing)
+        // Safe parse: sanitize and JSON.parse instead of eval
         let jsonData
         try {
-          // Wrap in parentheses and use eval (controlled environment)
-          const objectLiteral = `(${jsonString})`
-          jsonData = eval(objectLiteral)
-          console.log('✅ Successfully parsed with eval')
-        } catch (evalError) {
-          console.log('❌ Eval failed, trying regex fixes...', evalError)
-          
-          // Fallback: Try regex fixes
-          let fixedJsonString = jsonString
-            .replace(/(\w+):/g, '"$1":')  // Add quotes around property names
-            .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-            .replace(/\n\s*/g, ' ')  // Replace newlines with spaces
-            .replace(/\s+/g, ' ')  // Replace multiple spaces with single space
+          let sanitized = jsonString
+            // Quote unquoted property keys
+            .replace(/([,{\s])([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
+            // Remove trailing commas
+            .replace(/,(\s*[}\]])/g, '$1')
+            // Normalize whitespace
+            .replace(/\n\s*/g, ' ')
+            .replace(/\s+/g, ' ')
             .trim()
-          
-          console.log('🔧 Fixed JSON string:', fixedJsonString.substring(0, 200) + '...')
-          jsonData = JSON.parse(fixedJsonString)
+          console.log('🔧 Sanitized JSON string:', sanitized.substring(0, 200) + '...')
+          jsonData = JSON.parse(sanitized)
+        } catch (parseError) {
+          console.log('❌ JSON.parse failed after sanitization:', parseError)
+          throw parseError
         }
         excelData = jsonData
         
