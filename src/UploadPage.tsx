@@ -40,14 +40,24 @@ const UploadPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   }
 
   const [authed, setAuthed] = useState(false)
+  const [roles, setRoles] = useState<string[]>([])
   React.useEffect(() => {
     let mounted = true
     supabase.auth.getUser().then(({ data }) => {
-      if (mounted) setAuthed(!!data.user)
+      if (!mounted) return
+      setAuthed(!!data.user)
+      const r = ((data.user as any)?.app_metadata?.roles as string[]) || []
+      setRoles(Array.isArray(r) ? r : [])
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_, session) => setAuthed(!!session?.user))
+    const { data: sub } = supabase.auth.onAuthStateChange((_, session) => {
+      setAuthed(!!session?.user)
+      const r = ((session?.user as any)?.app_metadata?.roles as string[]) || []
+      setRoles(Array.isArray(r) ? r : [])
+    })
     return () => { mounted = false; sub.subscription.unsubscribe() }
   }, [])
+
+  const isAdmin = roles.includes('admin')
 
   return (
     <div className="flex flex-col h-screen bg-white">
@@ -64,6 +74,11 @@ const UploadPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
               Please sign in to upload files. Use the LOGIN button in the header.
             </div>
           )}
+          {authed && !isAdmin && (
+            <div className="mb-4 text-sm text-red-800 bg-red-50 border border-red-200 rounded p-3">
+              You dont have permission to access this page. Ask an admin to grant the <span className="font-semibold">admin</span> role.
+            </div>
+          )}
           <form onSubmit={handleUpload} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Select files</label>
@@ -72,13 +87,14 @@ const UploadPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
                 multiple
                 onChange={(e) => setFiles(e.target.files)}
                 className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                disabled={!authed || !isAdmin}
               />
               <p className="text-xs text-gray-500 mt-2">Uploads to bucket: <span className="font-mono">{BUCKET}</span></p>
             </div>
 
             <button
               type="submit"
-              disabled={!authed || !files || files.length === 0 || isUploading}
+              disabled={!authed || !isAdmin || !files || files.length === 0 || isUploading}
               className="px-4 py-2 rounded-md bg-blue-600 text-white disabled:bg-gray-300"
             >
               {isUploading ? 'Uploading…' : 'Upload'}
