@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import * as ExcelJS from 'exceljs'
 import './App.css'
-import AdminConsole from './AdminConsole'
+// AdminConsole removed
+import DocumentVisibility from './DocumentVisibility'
 import UploadPage from './UploadPage'
 import { supabase } from './lib/supabaseClient'
 import pkg from '../package.json'
@@ -474,7 +475,7 @@ function App() {
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState<'chat' | 'admin' | 'upload'>('chat')
+  const [currentPage, setCurrentPage] = useState<'chat' | 'admin' | 'upload' | 'visibility'>('chat')
   const [navCollapsed, setNavCollapsed] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newsSheetOpen, setNewsSheetOpen] = useState(false)
@@ -1271,14 +1272,15 @@ function App() {
                       <span>Upload Files</span>
                     </button>
                   )}
+                  
                   {hasAdmin && (
                     <button 
-                      onClick={() => { setCurrentPage('admin'); setMobileNavOpen(false) }} 
-                      aria-current={currentPage === 'admin' ? 'page' : undefined}
-                      className={`${currentPage === 'admin' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      onClick={() => { setCurrentPage('visibility'); setMobileNavOpen(false) }} 
+                      aria-current={currentPage === 'visibility' ? 'page' : undefined}
+                      className={`${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 3a.75.75 0 00-.75.75V6H6.75A.75.75 0 006 6.75v2.5a.75.75 0 00.75.75H9v2.5H6.75a.75.75 0 00-.75.75v2.5c0 .414.336.75.75.75H9v2.25c0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75V18h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15v-2.5h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15V3.75a.75.75 0 00-.75-.75h-4.5z"/></svg>
-                      <span>Admin Console</span>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      <span>Document Visibility</span>
                     </button>
                   )}
                 </nav>
@@ -1360,17 +1362,18 @@ function App() {
                     <span className={navCollapsed ? 'hidden' : ''}>Upload Files</span>
                   </button>
                 )}
-                           {hasAdmin && (
-                             <button 
-                               onClick={() => setCurrentPage('admin')}
-                    aria-current={currentPage === 'admin' ? 'page' : undefined}
-                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'admin' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                    title="Admin Console"
-                             >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.75 3a.75.75 0 00-.75.75V6H6.75A.75.75 0 006 6.75v2.5a.75.75 0 00.75.75H9v2.5H6.75a.75.75 0 00-.75.75v2.5c0 .414.336.75.75.75H9v2.25c0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75V18h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15v-2.5h2.25a.75.75 0 00.75-.75v-2.5a.75.75 0 00-.75-.75H15V3.75a.75.75 0 00-.75-.75h-4.5z"/></svg>
-                    <span className={navCollapsed ? 'hidden' : ''}>Admin Console</span>
-                             </button>
-                           )}
+                
+                {hasAdmin && (
+                  <button
+                    onClick={() => setCurrentPage('visibility')}
+                    aria-current={currentPage === 'visibility' ? 'page' : undefined}
+                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                    title="Document Visibility"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                    <span className={navCollapsed ? 'hidden' : ''}>Document Visibility</span>
+                  </button>
+                )}
                 {/* Removed non-functional links on desktop */}
               </nav>
               <div className={`border-t border-gray-200 pt-2 mt-2 pb-2 ${navCollapsed ? 'px-2' : 'px-2'}`}>
@@ -1499,10 +1502,12 @@ function App() {
                 )
               )}
 
-              {currentPage !== 'chat' && currentPage === 'admin' && (
+              
+
+              {currentPage !== 'chat' && currentPage === 'visibility' && (
                 hasAdmin ? (
-                  <div className="flex-1 overflow-y-auto w-full">
-                    <AdminConsole />
+                  <div className="flex-1 overflow-y-auto w-full p-4">
+                    <DocumentVisibility />
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
