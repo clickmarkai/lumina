@@ -1,4 +1,8 @@
 # Change Log
+## [0.0.4] LUMINA 2025-08-30
+### Updates
+- fix build error
+
 ## [0.0.3] LUMINA 2025-08-30
 ### Updates
 - Created `DocumentVisibility` admin page to manage `documents.visibility` with a per-row dropdown (public_theory, user, admin). Renders inside the main layout and is admin-only (`src/DocumentVisibility.tsx`, `src/App.tsx`).
