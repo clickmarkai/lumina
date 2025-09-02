@@ -1,4 +1,10 @@
 # Change Log
+## [0.0.3] LUMINA 2025-08-30
+### Updates
+- Created `DocumentVisibility` admin page to manage `documents.visibility` with a per-row dropdown (public_theory, user, admin). Renders inside the main layout and is admin-only (`src/DocumentVisibility.tsx`, `src/App.tsx`).
+- Integrated page into mobile drawer and desktop left nav; entries are visible only for admins (`src/App.tsx`).
+- Removed Admin Console page and its navigation links from both mobile and desktop (`src/App.tsx`).
+
 ## [0.0.2] LUMINA 2025-08-30
 ### Updates
 - Kept header and left navigation persistent across pages; ensured `UploadPage` and `AdminConsole` render inside the main layout (`src/App.tsx`).
