@@ -440,27 +440,35 @@ const mockNews: NewsItem[] = [
 ]
 
 function App() {
-  // Generate and store user_id in localStorage on each app load
-  const [userId] = useState(() => {
-    const newUserId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    localStorage.setItem('lumina_user_id', newUserId)
-    console.log('🆔 New user session started:', newUserId)
+  // Helper to generate new session-scoped user id
+  const createNewUserId = useCallback(() => {
+    return `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  }, [])
+
+  // Store userId in state and persist to localStorage
+  const [userId, setUserId] = useState(() => {
+    const existing = localStorage.getItem('lumina_user_id')
+    const newId = existing || `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    localStorage.setItem('lumina_user_id', newId)
+    console.log('🆔 User session started:', newId)
     console.log('💡 Tip: Use getUserId() in console to view current user ID')
-    return newUserId
+    return newId
   })
+
+  useEffect(() => {
+    localStorage.setItem('lumina_user_id', userId)
+  }, [userId])
 
   // Make getUserId available globally for debugging
   useEffect(() => {
     (window as any).getUserId = () => {
-      const currentUserId = localStorage.getItem('lumina_user_id')
-      console.log('Current user ID:', currentUserId)
-      return currentUserId || undefined
+      console.log('Current user ID:', userId)
+      return userId
     }
-    
     return () => {
       delete (window as any).getUserId
     }
-  }, [])
+  }, [userId])
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -503,18 +511,47 @@ function App() {
     supabase.auth.getUser().then(({ data }) => {
       if (mounted) setCurrentUser(data.user ?? null)
     })
-    const { data: sub } = supabase.auth.onAuthStateChange((_, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       setCurrentUser(session?.user ?? null)
+      // Reset userId on login/logout
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        const newId = createNewUserId()
+        setUserId(newId)
+        localStorage.setItem('lumina_user_id', newId)
+        console.log('🔁 Session user ID reset due to auth change:', event, newId)
+        // Clear chat messages to default greeting
+        setMessages([
+          {
+            id: Date.now().toString(),
+            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+            role: 'assistant',
+            timestamp: new Date()
+          }
+        ])
+      }
     })
     return () => {
       mounted = false
       sub.subscription.unsubscribe()
     }
-  }, [])
+  }, [createNewUserId])
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
     setAuthOpen(false)
+    // Also regenerate userId on manual sign out
+    const newId = createNewUserId()
+    setUserId(newId)
+    localStorage.setItem('lumina_user_id', newId)
+    // Clear chat messages to default greeting
+    setMessages([
+      {
+        id: Date.now().toString(),
+        content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+        role: 'assistant',
+        timestamp: new Date()
+      }
+    ])
   }
 
     // Excel Download Component with Real Image Embedding
@@ -1141,16 +1178,21 @@ function App() {
     setIsLoading(true)
 
     try {
-      // Send message to webhook endpoint
-      const response = await fetch('https://primary-production-b68a.up.railway.app/webhook/lumina_chat', {
+      // Prepare auth token for server-side verification in n8n
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+
+      const response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: userMessage.content,
+          chatInput: userMessage.content,
           timestamp: userMessage.timestamp.toISOString(),
-          user_id: userId // Use the stored user ID
+          userId: userId, // Use the stored user ID
+          sessionId: userId,
+          accessToken: accessToken || null
         })
       })
 
@@ -1196,18 +1238,18 @@ function App() {
          <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
             {/* Logo + Mobile sidebar toggle */}
           <div className="flex items-center">
-                         <button
+            <button
                onClick={() => setMobileNavOpen(!mobileNavOpen)}
                className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
-             >
+            >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
                          <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
                LIGHT<br />TALK
-                </div>
-              </div>
+          </div>
+        </div>
 
             {/* Spacer (left nav handles navigation) */}
             <div />
@@ -1245,7 +1287,7 @@ function App() {
                   <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="p-2 rounded-md text-gray-600 hover:bg-gray-100">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
-                </div>
+             </div>
                 <nav className="space-y-1 flex-1 overflow-y-auto">
                   <button 
                     onClick={() => { setCurrentPage('chat'); setMobileNavOpen(false) }} 
@@ -1269,7 +1311,7 @@ function App() {
                       className={`${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
-                      <span>Upload Files</span>
+                      <span>Upload Documents</span>
                     </button>
                   )}
                   
@@ -1289,18 +1331,18 @@ function App() {
                     <div className="flex items-start gap-2">
                       <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium">
                         {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
-                      </div>
+                  </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
                         {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
                           <div className="mt-0.5 flex flex-wrap gap-1">
                             {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
                               <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
-                            ))}
-                          </div>
+              ))}
+            </div>
                         )}
                         <div className="mt-2 flex gap-2">
-                          <button
+              <button 
                             onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
                             className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                           >
@@ -1311,27 +1353,27 @@ function App() {
                             className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                           >
                             Sign out
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+              </button>
+            </div>
+          </div>
+        </div>
                   ) : (
                     <div className="flex items-center justify-between">
                       <div className="text-sm text-gray-600">Not signed in</div>
-                      <button
+                         <button
                         onClick={() => { setAuthOpen(true); setMobileNavOpen(false); }}
                         className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                      >
+             >
                         Sign in
-                      </button>
-                    </div>
-                  )}
+            </button>
                 </div>
+                  )}
+              </div>
               </div>
             </div>
             {/* Left Navigation (collapsible) */}
             <div className={`hidden lg:flex flex-col bg-white border-r border-gray-200 transition-all duration-200 ${navCollapsed ? 'w-16' : 'w-60'}`}>
-              <button
+                       <button 
                 onClick={() => setNavCollapsed(!navCollapsed)}
                 aria-label="Toggle navigation"
                 className={`m-2 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100`}
@@ -1342,7 +1384,7 @@ function App() {
                          </svg>
                        </button>
               <nav className="flex-1 px-2 pb-2 space-y-1">
-                <button
+                           <button 
                   onClick={() => setCurrentPage('chat')}
                   aria-current={currentPage === 'chat' ? 'page' : undefined}
                   className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
@@ -1350,17 +1392,17 @@ function App() {
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
                   <span className={navCollapsed ? 'hidden' : ''}>Chat</span>
-                </button>
+                           </button>
                 {hasAdmin && (
                   <button
                     onClick={() => setCurrentPage('upload')}
                     aria-current={currentPage === 'upload' ? 'page' : undefined}
                     className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                    title="Upload Files"
+                    title="Upload Documents"
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
-                    <span className={navCollapsed ? 'hidden' : ''}>Upload Files</span>
-                  </button>
+                    <span className={navCollapsed ? 'hidden' : ''}>Upload Documents</span>
+                           </button>
                 )}
                 
                 {hasAdmin && (
@@ -1372,7 +1414,7 @@ function App() {
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                     <span className={navCollapsed ? 'hidden' : ''}>Document Visibility</span>
-                  </button>
+                           </button>
                 )}
                 {/* Removed non-functional links on desktop */}
               </nav>
@@ -1404,11 +1446,11 @@ function App() {
                             className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                           >
                             Sign out
-                          </button>
+                           </button>
                         </div>
-                      </div>
-                    )}
-                  </div>
+                         </div>
+                       )}
+                     </div>
                 ) : (
                   <div className={`${navCollapsed ? 'flex items-center justify-center' : 'flex items-center justify-between'}`}>
                     <div className="text-sm text-gray-600">{navCollapsed ? '' : 'Not signed in'}</div>
@@ -1418,7 +1460,7 @@ function App() {
                         className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
                       >
                         Sign in
-                      </button>
+           </button>
                     )}
                   </div>
                 )}
@@ -1428,62 +1470,62 @@ function App() {
             <div className="flex-1 flex flex-col overflow-hidden min-w-0 lg:ml-0">
               {currentPage === 'chat' && (
                 <>
-                  {/* Chat Messages */}
+        {/* Chat Messages */}
                   <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-28 w-full">
-                    <div className="max-w-4xl mx-auto w-full">
-                      {messages.map((message) => (
+          <div className="max-w-4xl mx-auto w-full">
+            {messages.map((message) => (
                         <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} userInitial={currentUser?.email?.slice(0,1)?.toUpperCase() || 'U'} />
-                      ))}
-                      {isLoading && <LoadingIndicator />}
-                      <div ref={messagesEndRef} />
-                    </div>
-                  </div>
+            ))}
+            {isLoading && <LoadingIndicator />}
+            <div ref={messagesEndRef} />
+        </div>
+      </div>
 
-                  {/* Chat Input */}
+        {/* Chat Input */}
                   <div className={`fixed bottom-0 p-4 z-20 lg:z-40 left-0 right-0 ${navCollapsed ? 'lg:left-16' : 'lg:left-60'} lg:right-80`}>
-                    <div className="max-w-4xl mx-auto">
+        <div className="max-w-4xl mx-auto">
                       <div className="border border-gray-200 bg-white/90 backdrop-blur rounded-2xl shadow-xl p-2">
-                        <form onSubmit={handleSubmit} className="relative">
-                          <textarea
-                            value={inputValue}
-                            onChange={(e) => setInputValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
-                                e.preventDefault()
-                                handleSubmit(e)
-                              } else if (e.key === 'Tab' && e.shiftKey) {
-                                e.preventDefault()
-                                const textarea = e.target as HTMLTextAreaElement
-                                const start = textarea.selectionStart
-                                const end = textarea.selectionEnd
-                                const newValue = inputValue.substring(0, start) + '\n' + inputValue.substring(end)
-                                setInputValue(newValue)
-                                setTimeout(() => {
-                                  textarea.selectionStart = textarea.selectionEnd = start + 1
-                                }, 0)
-                              }
-                            }}
-                            placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
+          <form onSubmit={handleSubmit} className="relative">
+            <textarea
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSubmit(e)
+                  } else if (e.key === 'Tab' && e.shiftKey) {
+                    e.preventDefault()
+                    const textarea = e.target as HTMLTextAreaElement
+                    const start = textarea.selectionStart
+                    const end = textarea.selectionEnd
+                    const newValue = inputValue.substring(0, start) + '\n' + inputValue.substring(end)
+                    setInputValue(newValue)
+                    setTimeout(() => {
+                      textarea.selectionStart = textarea.selectionEnd = start + 1
+                    }, 0)
+                  }
+                }}
+                placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
                             className="w-full border border-gray-300 rounded-2xl px-6 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
-                            disabled={isLoading}
-                            rows={1}
+                disabled={isLoading}
+              rows={1}
                             style={{ height: 'auto', minHeight: '3rem' }}
-                            onInput={(e) => {
-                              const textarea = e.target as HTMLTextAreaElement
-                              textarea.style.height = 'auto'
-                              textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
-                            }}
-                          />
-                          <button
-                            type="submit"
-                            disabled={!inputValue.trim() || isLoading}
-                            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
-                          >
+                onInput={(e) => {
+                  const textarea = e.target as HTMLTextAreaElement
+                  textarea.style.height = 'auto'
+                  textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
+                }}
+            />
+            <button
+              type="submit"
+              disabled={!inputValue.trim() || isLoading}
+                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
+              >
                             <svg className="w-6 h-6 transform -translate-y-0.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                            </svg>
-                          </button>
-                        </form>
+              </svg>
+            </button>
+          </form>
                       </div>
                     </div>
                   </div>
@@ -1493,12 +1535,12 @@ function App() {
               {currentPage !== 'chat' && currentPage === 'upload' && (
                 hasAdmin ? (
                   <div className="flex-1 overflow-y-auto p-4 w-full">
-                    <UploadPage onBack={() => setCurrentPage('chat')} />
-                  </div>
+                    <UploadPage />
+              </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
                     <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
-                  </div>
+            </div>
                 )
               )}
 
@@ -1508,7 +1550,7 @@ function App() {
                 hasAdmin ? (
                   <div className="flex-1 overflow-y-auto w-full p-4">
                     <DocumentVisibility />
-                  </div>
+          </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
                     <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
@@ -1552,7 +1594,7 @@ function App() {
           onClick={() => setSidebarOpen(false)}
         />
       )}
-      </>
+        </>
 
       {/* Auth Modal */}
       {authOpen && (

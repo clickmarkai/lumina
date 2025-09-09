@@ -1,4 +1,14 @@
 # Change Log
+## [0.0.5] LUMINA 2025-09-02
+### Updates
+- Upload Documents UI: removed page-local header; matched layout with `DocumentVisibility` (container, title, subtext, card styling). Dropped `onBack` prop (`src/UploadPage.tsx`, `src/App.tsx`).
+- Navigation labels: renamed "Upload Files" to "Upload Documents" in mobile drawer and desktop sidebar (`src/App.tsx`).
+- Chat session management: regenerate `userId` on login and logout; persist to `localStorage`; `window.getUserId()` returns current value (`src/App.tsx`).
+- Chat clearing on auth change: reset messages to default greeting on login and logout (`src/App.tsx`).
+- Chat → n8n integration: include `sessionId` and `userId` in body; added optional `accessToken` body support earlier and finally standardized to body token with CORS guidance; added/removing headers as requested across iterations (`src/App.tsx`).
+- Build optimizations: lazy-load `react-markdown`, dynamic-import `exceljs`, wrap markdown in `Suspense`, and remove `eval` from JSON parsing (`src/App.tsx`).
+- Removed `AdminConsole.tsx` file and all references; ensured no traces remain (`src/App.tsx`).
+
 ## [0.0.4] LUMINA 2025-08-30
 ### Updates
 - fix build error

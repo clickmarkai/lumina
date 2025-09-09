@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabaseClient'
 
-type Visibility = 'public_theory' | 'user' | 'admin'
+type Visibility = 'public' | 'user' | 'admin'
 
 type DocumentRow = {
   id: string | number
@@ -11,7 +11,7 @@ type DocumentRow = {
   created_at?: string | null
 }
 
-const VISIBILITY_OPTIONS: Visibility[] = ['public_theory', 'user', 'admin']
+const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin']
 
 const DocumentVisibility: React.FC = () => {
   const [docs, setDocs] = useState<DocumentRow[]>([])

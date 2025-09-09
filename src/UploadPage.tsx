@@ -3,7 +3,7 @@ import { supabase } from './lib/supabaseClient'
 
 const BUCKET = 'documents'
 
-const UploadPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+const UploadPage: React.FC = () => {
   const [files, setFiles] = useState<FileList | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -60,15 +60,14 @@ const UploadPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const isAdmin = roles.includes('admin')
 
   return (
-    <div className="flex flex-col h-screen bg-white">
-      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow">
-        <button onClick={onBack} className="px-3 py-2 rounded-md border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 text-sm">← Back</button>
-        <h1 className="text-base font-semibold text-gray-900">Upload Documents</h1>
-        <div />
-      </header>
+    <div className="p-4 w-full">
+      <div className="max-w-4xl mx-auto w-full">
+        <div className="mb-4">
+          <h1 className="text-lg font-semibold text-gray-900">Upload Documents</h1>
+          <p className="text-sm text-gray-600">Upload files to the documents bucket.</p>
+        </div>
 
-      <main className="flex-1 p-4 overflow-auto">
-        <div className="max-w-xl mx-auto bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
           {!authed && (
             <div className="mb-4 text-sm text-yellow-800 bg-yellow-50 border border-yellow-200 rounded p-3">
               Please sign in to upload files. Use the LOGIN button in the header.
@@ -105,7 +104,7 @@ const UploadPage: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             )}
           </form>
         </div>
-      </main>
+      </div>
     </div>
   )
 }
