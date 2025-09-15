@@ -4,6 +4,8 @@ const ReactMarkdown = React.lazy(() => import('react-markdown'))
 import './App.css'
 import DocumentVisibility from './DocumentVisibility'
 import UploadPage from './UploadPage'
+import InviteAdmins from './InviteAdmins'
+import SetPasswordPage from './SetPasswordPage'
 import { supabase } from './lib/supabaseClient'
 import pkg from '../package.json'
 import type { User } from '@supabase/supabase-js'
@@ -13,6 +15,7 @@ interface Message {
   content: string
   role: 'user' | 'assistant'
   timestamp: Date
+  attachments?: string[]
 }
 
 interface NewsItem {
@@ -480,14 +483,16 @@ function App() {
   ])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility'>('chat')
+  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility' | 'invite' | 'set-password'>('chat')
   const [navCollapsed, setNavCollapsed] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newsSheetOpen, setNewsSheetOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Roles / RBAC
   const roles = Array.isArray((currentUser as any)?.app_metadata?.roles)
@@ -502,6 +507,28 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [attachedFiles])
+
+  // Hash-based route detection for password setup
+  useEffect(() => {
+    const applyRoute = () => {
+      const { hash, pathname } = window.location
+      const hasAuthTokens = /(?:^#|[&#])type=(recovery|invite)(&|$)/.test(hash) && /access_token=/.test(hash) && /refresh_token=/.test(hash)
+      if (pathname === '/set-password' || hasAuthTokens) {
+        setCurrentPage('set-password')
+      }
+    }
+    applyRoute()
+    window.addEventListener('hashchange', applyRoute)
+    window.addEventListener('popstate', applyRoute)
+    return () => {
+      window.removeEventListener('hashchange', applyRoute)
+      window.removeEventListener('popstate', applyRoute)
+    }
+  }, [])
 
   // Left navigation replaces top-right hamburger dropdown
 
@@ -1164,17 +1191,23 @@ function App() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!inputValue.trim() || isLoading) return
+    if ((!inputValue.trim() && attachedFiles.length === 0) || isLoading) return
+
+    const filesToSend = [...attachedFiles]
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      content: inputValue,
+      content: inputValue || (filesToSend.length > 0 ? `Uploaded ${filesToSend.length} file(s).` : ''),
       role: 'user',
-      timestamp: new Date()
+      timestamp: new Date(),
+      attachments: filesToSend.map(f => f.name)
     }
 
     setMessages(prev => [...prev, userMessage])
     setInputValue('')
+    // Clear attachments immediately for UX
+    setAttachedFiles([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
     setIsLoading(true)
 
     try {
@@ -1182,50 +1215,64 @@ function App() {
       const { data: sessionData } = await supabase.auth.getSession()
       const accessToken = sessionData.session?.access_token
 
-      const response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
+      let response: Response
+      if (filesToSend.length > 0) {
+        const form = new FormData()
+        form.append('chatInput', userMessage.content)
+        form.append('timestamp', userMessage.timestamp.toISOString())
+        form.append('userId', userId)
+        form.append('sessionId', userId)
+        if (accessToken) form.append('accessToken', accessToken)
+        for (const f of filesToSend) form.append('files', f, f.name)
+        response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
+          method: 'POST',
+          body: form
+        })
+      } else {
+        response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+            'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          chatInput: userMessage.content,
+            chatInput: userMessage.content,
           timestamp: userMessage.timestamp.toISOString(),
-          userId: userId, // Use the stored user ID
-          sessionId: userId,
-          accessToken: accessToken || null
+            userId: userId,
+            sessionId: userId,
+            accessToken: accessToken || null
         })
       })
+      }
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
 
       const data = await response.json()
-      
-      // Create assistant response from API using "output" field
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: data.output || data.response || data.message || 'I received your message but couldn\'t generate a proper response.',
         role: 'assistant',
         timestamp: new Date()
       }
-      
       setMessages(prev => [...prev, assistantMessage])
     } catch (error) {
       console.error('Error sending message:', error)
-      
-      // Show error message to user
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         content: 'Sorry, I\'m having trouble connecting to the server right now. Please try again later.',
         role: 'assistant',
         timestamp: new Date()
       }
-      
       setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // Standalone Set Password page (bypass app layout)
+  if (currentPage === 'set-password') {
+    return <SetPasswordPage />
   }
 
   return (
@@ -1234,22 +1281,22 @@ function App() {
 
       {/* App Layout */}
       <>
-          {/* Full-width Header */}
-         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
-            {/* Logo + Mobile sidebar toggle */}
+        {/* Full-width Header */}
+        <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
+          {/* Logo + Mobile sidebar toggle */}
           <div className="flex items-center">
-            <button
+          <button
                onClick={() => setMobileNavOpen(!mobileNavOpen)}
                className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
-            >
+          >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
-            </button>
+          </button>
                          <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
                LIGHT<br />TALK
-          </div>
         </div>
+      </div>
 
             {/* Spacer (left nav handles navigation) */}
             <div />
@@ -1287,191 +1334,213 @@ function App() {
                   <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="p-2 rounded-md text-gray-600 hover:bg-gray-100">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
-             </div>
-                <nav className="space-y-1 flex-1 overflow-y-auto">
-                  <button 
-                    onClick={() => { setCurrentPage('chat'); setMobileNavOpen(false) }} 
-                    aria-current={currentPage === 'chat' ? 'page' : undefined}
-                    className={`${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
-                    <span>Chat</span>
-                  </button>
-                  <button 
-                    onClick={() => { setNewsSheetOpen(true); setMobileNavOpen(false) }} 
-                    className="flex items-center gap-3 w-full px-2 py-2 rounded-md text-gray-700 hover:bg-gray-50"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h10"/></svg>
-                    <span>News</span>
-                  </button>
-                  {hasAdmin && (
+           </div>
+                  <nav className="space-y-1 flex-1 overflow-y-auto">
                     <button 
-                      onClick={() => { setCurrentPage('upload'); setMobileNavOpen(false) }} 
-                      aria-current={currentPage === 'upload' ? 'page' : undefined}
-                      className={`${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      onClick={() => { setCurrentPage('chat'); setMobileNavOpen(false) }} 
+                      aria-current={currentPage === 'chat' ? 'page' : undefined}
+                      className={`${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
-                      <span>Upload Documents</span>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
+                      <span>Chat</span>
                     </button>
-                  )}
-                  
-                  {hasAdmin && (
                     <button 
-                      onClick={() => { setCurrentPage('visibility'); setMobileNavOpen(false) }} 
-                      aria-current={currentPage === 'visibility' ? 'page' : undefined}
-                      className={`${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      onClick={() => { setNewsSheetOpen(true); setMobileNavOpen(false) }} 
+                      className="flex items-center gap-3 w-full px-2 py-2 rounded-md text-gray-700 hover:bg-gray-50"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                      <span>Document Visibility</span>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h10"/></svg>
+                      <span>News</span>
                     </button>
-                  )}
-                </nav>
-                <div className="border-t border-gray-200 pt-2 mt-2">
-                  {currentUser ? (
-                    <div className="flex items-start gap-2">
-                      <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium">
-                        {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
+                    {hasAdmin && (
+                      <button 
+                        onClick={() => { setCurrentPage('upload'); setMobileNavOpen(false) }} 
+                        aria-current={currentPage === 'upload' ? 'page' : undefined}
+                        className={`${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
+                        <span>Upload Documents</span>
+                      </button>
+                    )}
+                    
+                    {hasAdmin && (
+                      <button 
+                        onClick={() => { setCurrentPage('visibility'); setMobileNavOpen(false) }} 
+                        aria-current={currentPage === 'visibility' ? 'page' : undefined}
+                        className={`${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        <span>Document Visibility</span>
+                      </button>
+                    )}
+
+                    {hasAdmin && (
+                      <button 
+                        onClick={() => { setCurrentPage('invite'); setMobileNavOpen(false) }} 
+                        aria-current={currentPage === 'invite' ? 'page' : undefined}
+                        className={`${currentPage === 'invite' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
+                        <span>Invite Admins</span>
+                      </button>
+                    )}
+                  </nav>
+                  <div className="border-t border-gray-200 pt-2 mt-2">
+                    {currentUser ? (
+                      <div className="flex items-start gap-2">
+                        <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium">
+                          {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
                   </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
-                        {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
-                          <div className="mt-0.5 flex flex-wrap gap-1">
-                            {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
-                              <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
+                          {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
+                                <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
               ))}
             </div>
-                        )}
-                        <div className="mt-2 flex gap-2">
+                          )}
+                          <div className="mt-2 flex gap-2">
               <button 
-                            onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
-                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                          >
-                            Copy email
-                          </button>
-                          <button
-                            onClick={async () => { await handleSignOut(); setMobileNavOpen(false); }}
-                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                          >
-                            Sign out
+                              onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Copy email
+                            </button>
+                            <button
+                              onClick={async () => { await handleSignOut(); setMobileNavOpen(false); }}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Sign out
               </button>
             </div>
           </div>
         </div>
-                  ) : (
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm text-gray-600">Not signed in</div>
+                    ) : (
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm text-gray-600">Not signed in</div>
                          <button
-                        onClick={() => { setAuthOpen(true); setMobileNavOpen(false); }}
-                        className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                          onClick={() => { setAuthOpen(true); setMobileNavOpen(false); }}
+                          className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
              >
-                        Sign in
+                          Sign in
             </button>
                 </div>
-                  )}
+                    )}
               </div>
+                </div>
               </div>
-            </div>
-            {/* Left Navigation (collapsible) */}
-            <div className={`hidden lg:flex flex-col bg-white border-r border-gray-200 transition-all duration-200 ${navCollapsed ? 'w-16' : 'w-60'}`}>
+              {/* Left Navigation (collapsible) */}
+              <div className={`hidden lg:flex flex-col bg-white border-r border-gray-200 transition-all duration-200 ${navCollapsed ? 'w-16' : 'w-60'}`}>
                        <button 
-                onClick={() => setNavCollapsed(!navCollapsed)}
-                aria-label="Toggle navigation"
-                className={`m-2 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100`}
-                title={navCollapsed ? 'Expand' : 'Collapse'}
+                  onClick={() => setNavCollapsed(!navCollapsed)}
+                  aria-label="Toggle navigation"
+                  className={`m-2 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100`}
+                  title={navCollapsed ? 'Expand' : 'Collapse'}
                        >
                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h7" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h7" />
                          </svg>
                        </button>
-              <nav className="flex-1 px-2 pb-2 space-y-1">
+                <nav className="flex-1 px-2 pb-2 space-y-1">
+                             <button 
+                    onClick={() => setCurrentPage('chat')}
+                    aria-current={currentPage === 'chat' ? 'page' : undefined}
+                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                    title="Chat"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
+                    <span className={navCollapsed ? 'hidden' : ''}>Chat</span>
+                             </button>
+                  {hasAdmin && (
+                    <button
+                      onClick={() => setCurrentPage('upload')}
+                      aria-current={currentPage === 'upload' ? 'page' : undefined}
+                      className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      title="Upload Documents"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
+                      <span className={navCollapsed ? 'hidden' : ''}>Upload Documents</span>
+                             </button>
+                  )}
+                  
+                  {hasAdmin && (
                            <button 
-                  onClick={() => setCurrentPage('chat')}
-                  aria-current={currentPage === 'chat' ? 'page' : undefined}
-                  className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                  title="Chat"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
-                  <span className={navCollapsed ? 'hidden' : ''}>Chat</span>
+                      onClick={() => setCurrentPage('visibility')}
+                      aria-current={currentPage === 'visibility' ? 'page' : undefined}
+                      className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      title="Document Visibility"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      <span className={navCollapsed ? 'hidden' : ''}>Document Visibility</span>
                            </button>
-                {hasAdmin && (
-                  <button
-                    onClick={() => setCurrentPage('upload')}
-                    aria-current={currentPage === 'upload' ? 'page' : undefined}
-                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                    title="Upload Documents"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
-                    <span className={navCollapsed ? 'hidden' : ''}>Upload Documents</span>
+                  )}
+                  {hasAdmin && (
+                    <button
+                      onClick={() => setCurrentPage('invite')}
+                      aria-current={currentPage === 'invite' ? 'page' : undefined}
+                      className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'invite' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      title="Invite Admins"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
+                      <span className={navCollapsed ? 'hidden' : ''}>Invite Admins</span>
                            </button>
-                )}
-                
-                {hasAdmin && (
-                  <button
-                    onClick={() => setCurrentPage('visibility')}
-                    aria-current={currentPage === 'visibility' ? 'page' : undefined}
-                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                    title="Document Visibility"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                    <span className={navCollapsed ? 'hidden' : ''}>Document Visibility</span>
+                  )}
+                  {/* Removed non-functional links on desktop */}
+                </nav>
+                <div className={`border-t border-gray-200 pt-2 mt-2 pb-2 ${navCollapsed ? 'px-2' : 'px-2'}`}>
+                  {currentUser ? (
+                    <div className={`flex items-start w-full ${navCollapsed ? 'justify-center gap-0' : 'gap-2'}`}>
+                      <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium" title={currentUser.email || ''}>
+                        {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
+                      </div>
+                      {!navCollapsed && (
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
+                          {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
+                            <div className="mt-0.5 flex flex-wrap gap-1">
+                              {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
+                                <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Copy email
                            </button>
-                )}
-                {/* Removed non-functional links on desktop */}
-              </nav>
-              <div className={`border-t border-gray-200 pt-2 mt-2 pb-2 ${navCollapsed ? 'px-2' : 'px-2'}`}>
-                {currentUser ? (
-                  <div className={`flex items-start w-full ${navCollapsed ? 'justify-center gap-0' : 'gap-2'}`}>
-                    <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium" title={currentUser.email || ''}>
-                      {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
-                    </div>
-                    {!navCollapsed && (
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-gray-900 truncate" title={currentUser.email || ''}>{currentUser.email}</div>
-                        {Array.isArray((currentUser as any).app_metadata?.roles) && (currentUser as any).app_metadata.roles.length > 0 && (
-                          <div className="mt-0.5 flex flex-wrap gap-1">
-                            {((currentUser as any).app_metadata.roles as string[]).map((role: string) => (
-                              <span key={role} className="inline-flex items-center rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-[10px] uppercase tracking-wide">{role}</span>
-                            ))}
+                            <button
+                              onClick={async () => { await handleSignOut(); }}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                            >
+                              Sign out
+                           </button>
                           </div>
-                        )}
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            onClick={() => { navigator.clipboard.writeText(currentUser.email || ''); }}
-                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                          >
-                            Copy email
-                          </button>
-                          <button
-                            onClick={async () => { await handleSignOut(); }}
-                            className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                          >
-                            Sign out
-                           </button>
-                        </div>
                          </div>
                        )}
                      </div>
-                ) : (
-                  <div className={`${navCollapsed ? 'flex items-center justify-center' : 'flex items-center justify-between'}`}>
-                    <div className="text-sm text-gray-600">{navCollapsed ? '' : 'Not signed in'}</div>
-                    {!navCollapsed && (
-                      <button
-                        onClick={() => { setAuthOpen(true); }}
-                        className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                      >
-                        Sign in
+                  ) : (
+                    <div className={`${navCollapsed ? 'flex items-center justify-center' : 'flex items-center justify-between'}`}>
+                      <div className="text-sm text-gray-600">{navCollapsed ? '' : 'Not signed in'}</div>
+                      {!navCollapsed && (
+                        <button
+                          onClick={() => { setAuthOpen(true); }}
+                          className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                        >
+                          Sign in
            </button>
-                    )}
-                  </div>
-                )}
-              </div>
-                         </div>
-            {/* Main Content */}
-            <div className="flex-1 flex flex-col overflow-hidden min-w-0 lg:ml-0">
-              {currentPage === 'chat' && (
-                <>
+                      )}
+                    </div>
+                  )}
+                </div>
+                           </div>
+                {/* Main Content */}
+                <div className="flex-1 flex flex-col overflow-hidden min-w-0 lg:ml-0">
+                  {currentPage === 'chat' && (
+                    <>
         {/* Chat Messages */}
-                  <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-28 w-full">
+                    <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-28 w-full">
           <div className="max-w-4xl mx-auto w-full">
             {messages.map((message) => (
                         <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} userInitial={currentUser?.email?.slice(0,1)?.toUpperCase() || 'U'} />
@@ -1482,10 +1551,34 @@ function App() {
       </div>
 
         {/* Chat Input */}
-                  <div className={`fixed bottom-0 p-4 z-20 lg:z-40 left-0 right-0 ${navCollapsed ? 'lg:left-16' : 'lg:left-60'} lg:right-80`}>
+                    <div className={`fixed bottom-0 p-4 z-20 lg:z-40 left-0 right-0 ${navCollapsed ? 'lg:left-16' : 'lg:left-60'} lg:right-80`}>
         <div className="max-w-4xl mx-auto">
                       <div className="border border-gray-200 bg-white/90 backdrop-blur rounded-2xl shadow-xl p-2">
           <form onSubmit={handleSubmit} className="relative">
+          {attachedFiles.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {attachedFiles.map((f, idx) => (
+                <span key={idx} className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-gray-100 text-gray-700 text-xs border border-gray-200">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79V17a5 5 0 01-10 0V7a3 3 0 016 0v8a1 1 0 11-2 0V8"/></svg>
+                  <span className="max-w-[180px] truncate" title={f.name}>{f.name}</span>
+                  <button type="button" onClick={() => setAttachedFiles(attachedFiles.filter((_, i) => i !== idx))} className="text-gray-500 hover:text-gray-700">
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="relative">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2">
+              <button type="button" aria-label="Attach files" onClick={() => fileInputRef.current?.click()} className="text-gray-500 hover:text-gray-700">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79V17a5 5 0 01-10 0V7a3 3 0 016 0v8a1 1 0 11-2 0V8"/></svg>
+              </button>
+              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => {
+                const files = Array.from(e.target.files || [])
+                if (files.length) setAttachedFiles(prev => [...prev, ...files])
+                if (fileInputRef.current) fileInputRef.current.value = ''
+              }} />
+            </div>
             <textarea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
@@ -1506,10 +1599,10 @@ function App() {
                   }
                 }}
                 placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
-                            className="w-full border border-gray-300 rounded-2xl px-6 py-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
+              className="w-full border border-gray-300 rounded-2xl pl-10 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
                 disabled={isLoading}
               rows={1}
-                            style={{ height: 'auto', minHeight: '3rem' }}
+              style={{ height: 'auto', minHeight: '3rem' }}
                 onInput={(e) => {
                   const textarea = e.target as HTMLTextAreaElement
                   textarea.style.height = 'auto'
@@ -1518,13 +1611,14 @@ function App() {
             />
             <button
               type="submit"
-              disabled={!inputValue.trim() || isLoading}
+              disabled={(!inputValue.trim() && attachedFiles.length === 0) || isLoading}
                 className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
               >
-                            <svg className="w-6 h-6 transform -translate-y-0.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+              <svg className="w-6 h-6 transform -translate-y-0.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
               </svg>
             </button>
+          </div>
           </form>
                       </div>
                     </div>
@@ -1557,6 +1651,18 @@ function App() {
                   </div>
                 )
               )}
+              {currentPage !== 'chat' && currentPage === 'invite' && (
+                hasAdmin ? (
+                  <div className="flex-1 overflow-y-auto w-full p-4">
+                    <InviteAdmins />
+                  </div>
+                ) : (
+                  <div className="flex-1 p-6 w-full flex items-center justify-center">
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                  </div>
+                )
+              )}
+              {/* set-password handled as a standalone route above */}
             </div>
 
             {/* Sidebar (slides from right on mobile) */}
@@ -1680,6 +1786,16 @@ const MessageContainer = React.memo(({ message, preprocessMarkdown, ExcelDownloa
         {/* Message Content */}
         <div className="bg-blue-500 text-white rounded-lg px-4 py-3 shadow-lg min-w-0 overflow-hidden message-container">
           <p className="text-sm leading-relaxed break-words">{message.content}</p>
+          {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {message.attachments.map((name, idx) => (
+                <span key={idx} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-blue-200/40 bg-blue-400/20 text-xs text-blue-50">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79V17a5 5 0 01-10 0V7a3 3 0 016 0v8a1 1 0 11-2 0V8"/></svg>
+                  <span className="max-w-[160px] truncate" title={name}>{name}</span>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="text-xs text-blue-100 mt-2">
             {message.timestamp.toLocaleTimeString()}
           </div>
@@ -1734,7 +1850,11 @@ const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         onClose()
       } else {
         if (password !== confirm) throw new Error('Passwords do not match')
-        const { data, error } = await supabase.auth.signUp({ email, password })
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: 'https://lumina-clickmark.netlify.app' }
+        })
         if (error) throw error
         if (!data.session) {
           setInfo('Registration successful. Check your email to confirm, then sign in.')
