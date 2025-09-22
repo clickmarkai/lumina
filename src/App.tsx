@@ -6,6 +6,7 @@ import DocumentVisibility from './DocumentVisibility'
 import UploadPage from './UploadPage'
 import InviteAdmins from './InviteAdmins'
 import SetPasswordPage from './SetPasswordPage'
+import RebuildSearchIndex from './RebuildSearchIndex'
 import { supabase } from './lib/supabaseClient'
 import pkg from '../package.json'
 import type { User } from '@supabase/supabase-js'
@@ -481,11 +482,35 @@ function App() {
       timestamp: new Date()
     }
   ])
+  const MESSAGES_KEY = 'lumina_messages_v1'
+
+  // Load persisted messages on mount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(MESSAGES_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as Array<{
+          id: string; content: string; role: 'user' | 'assistant'; timestamp: string; attachments?: string[]
+        }>
+        const restored: Message[] = parsed.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))
+        if (restored.length > 0) setMessages(restored)
+      }
+    } catch {}
+  }, [])
+
+  // Persist messages on change
+  useEffect(() => {
+    try {
+      const serializable = messages.map(m => ({ ...m, timestamp: (m.timestamp as Date).toISOString() }))
+      sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(serializable))
+    } catch {}
+  }, [messages])
+
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility' | 'invite' | 'set-password'>('chat')
+  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility' | 'invite' | 'rebuild' | 'set-password'>('chat')
   const [navCollapsed, setNavCollapsed] = useState(true)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newsSheetOpen, setNewsSheetOpen] = useState(false)
@@ -546,15 +571,17 @@ function App() {
         setUserId(newId)
         localStorage.setItem('lumina_user_id', newId)
         console.log('🔁 Session user ID reset due to auth change:', event, newId)
-        // Clear chat messages to default greeting
-        setMessages([
-          {
-            id: Date.now().toString(),
-            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
-            role: 'assistant',
-            timestamp: new Date()
-          }
-        ])
+        // Only clear messages on explicit sign-out; keep history on sign-in
+        if (event === 'SIGNED_OUT') {
+          setMessages([
+            {
+              id: Date.now().toString(),
+              content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+              role: 'assistant',
+              timestamp: new Date()
+            }
+          ])
+        }
       }
     })
     return () => {
@@ -1285,18 +1312,18 @@ function App() {
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-lg">
           {/* Logo + Mobile sidebar toggle */}
           <div className="flex items-center">
-          <button
+            <button
                onClick={() => setMobileNavOpen(!mobileNavOpen)}
                className="lg:hidden p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 mr-2 shadow-sm hover:shadow-md transition-shadow"
-          >
+            >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
-          </button>
+            </button>
                          <div className="bg-cyan-400 text-white px-3 py-2 rounded-lg font-bold text-sm shadow-lg">
                LIGHT<br />TALK
+          </div>
         </div>
-      </div>
 
             {/* Spacer (left nav handles navigation) */}
             <div />
@@ -1334,7 +1361,7 @@ function App() {
                   <button onClick={() => setMobileNavOpen(false)} aria-label="Close menu" className="p-2 rounded-md text-gray-600 hover:bg-gray-100">
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
-           </div>
+             </div>
                   <nav className="space-y-1 flex-1 overflow-y-auto">
                     <button 
                       onClick={() => { setCurrentPage('chat'); setMobileNavOpen(false) }} 
@@ -1381,6 +1408,17 @@ function App() {
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
                         <span>Invite Admins</span>
+                      </button>
+                    )}
+
+                    {hasAdmin && (
+                      <button 
+                        onClick={() => { setCurrentPage('rebuild'); setMobileNavOpen(false) }} 
+                        aria-current={currentPage === 'rebuild' ? 'page' : undefined}
+                        className={`${currentPage === 'rebuild' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      >
+                        <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.5 12a7.5 7.5 0 0112.75-5.06M19.5 12a7.5 7.5 0 01-12.75 5.06M16.5 3V7.5H21M7.5 21H3V16.5"/></svg>
+                        <span>Rebuild Search Index</span>
                       </button>
                     )}
                   </nav>
@@ -1483,6 +1521,17 @@ function App() {
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
                       <span className={navCollapsed ? 'hidden' : ''}>Invite Admins</span>
+                           </button>
+                  )}
+                  {hasAdmin && (
+                    <button
+                      onClick={() => { setCurrentPage('rebuild') }} 
+                      aria-current={currentPage === 'rebuild' ? 'page' : undefined}
+                      className={`flex w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center items-center gap-0' : 'items-center gap-3'} ${currentPage === 'rebuild' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      title="Rebuild Search Index"
+                    >
+                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.5 12a7.5 7.5 0 0112.75-5.06M19.5 12a7.5 7.5 0 01-12.75 5.06M16.5 3V7.5H21M7.5 21H3V16.5"/></svg>
+                      <span className={navCollapsed ? 'hidden' : ''}>Rebuild Search Index</span>
                            </button>
                   )}
                   {/* Removed non-functional links on desktop */}
@@ -1599,14 +1648,17 @@ function App() {
                   }
                 }}
                 placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
-              className="w-full border border-gray-300 rounded-2xl pl-10 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] max-h-32 overflow-y-auto"
+              className="w-full border border-gray-300 rounded-2xl pl-10 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] overflow-y-hidden"
                 disabled={isLoading}
               rows={1}
               style={{ height: 'auto', minHeight: '3rem' }}
                 onInput={(e) => {
                   const textarea = e.target as HTMLTextAreaElement
+                const MAX_HEIGHT = 192 // px
                   textarea.style.height = 'auto'
-                  textarea.style.height = Math.min(textarea.scrollHeight, 128) + 'px'
+                const next = Math.min(textarea.scrollHeight, MAX_HEIGHT)
+                textarea.style.height = next + 'px'
+                textarea.style.overflowY = textarea.scrollHeight > MAX_HEIGHT ? 'auto' : 'hidden'
                 }}
             />
             <button
@@ -1655,6 +1707,17 @@ function App() {
                 hasAdmin ? (
                   <div className="flex-1 overflow-y-auto w-full p-4">
                     <InviteAdmins />
+                  </div>
+                ) : (
+                  <div className="flex-1 p-6 w-full flex items-center justify-center">
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                  </div>
+                )
+              )}
+              {currentPage !== 'chat' && currentPage === 'rebuild' && (
+                hasAdmin ? (
+                  <div className="flex-1 overflow-y-auto w-full p-4">
+                    <RebuildSearchIndex />
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
