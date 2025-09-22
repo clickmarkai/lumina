@@ -1,4 +1,12 @@
 # Change Log
+## [0.0.6] LUMINA 2025-09-09
+### Updates
+- Added admin invite flow pages:
+  - `InviteAdmins` to send Supabase invite emails with redirect to Set Password.
+  - `SetPasswordPage` is a standalone page; adopts invite/recovery session reliably (supports double-hash URLs), shows account email, confirm password, loading state, hides form on success, and adds a “Go to Chat” button.
+- Prevented cross-tab auto-login: Set Password uses an isolated Supabase client and only syncs the session to the app after the password is set (`src/SetPasswordPage.tsx`, `src/lib/supabaseClient.ts`).
+- Chat attachments: attach button, file chips above input, filenames echoed in sender bubble, icons don’t shift, attachments clear on send (`src/App.tsx`).
+
 ## [0.0.5] LUMINA 2025-09-02
 ### Updates
 - Upload Documents UI: removed page-local header; matched layout with `DocumentVisibility` (container, title, subtext, card styling). Dropped `onBack` prop (`src/UploadPage.tsx`, `src/App.tsx`).
