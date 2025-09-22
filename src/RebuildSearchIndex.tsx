@@ -1,5 +1,4 @@
 import React, { useState } from 'react'
-import { supabase } from './lib/supabaseClient'
 
 const WEBHOOK_URL = 'https://primary-production-b7ed9.up.railway.app/webhook/50616f08-196d-4957-b125-c689af579281'
 
@@ -14,8 +13,6 @@ const RebuildSearchIndex: React.FC = () => {
     setResult(null)
     setError(null)
     try {
-      const { data } = await supabase.auth.getUser()
-      const initiatedBy = data.user?.email || 'admin'
       const response = await fetch(WEBHOOK_URL, {
         method: 'GET',
         headers: {
