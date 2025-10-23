@@ -19,11 +19,20 @@ interface Message {
   attachments?: string[]
 }
 
+interface ChatSession {
+  id: string
+  name: string
+  createdAt: Date
+  lastMessageAt: Date
+  messageCount: number
+}
+
 interface NewsItem {
   id: string
   title: string
   image: string
   readTime: string
+  url?: string
 }
 
 // Memoized markdown renderer component
@@ -476,48 +485,537 @@ function App() {
 
   const [messages, setMessages] = useState<Message[]>([
     {
-      id: '1',
+      id: 'welcome_message',
       content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
       role: 'assistant',
       timestamp: new Date()
     }
   ])
-  const MESSAGES_KEY = 'lumina_messages_v1'
+  
+  // Chat session management
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  const [sessionName, setSessionName] = useState('')
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingSessionName, setEditingSessionName] = useState('')
+  const [hasLoadedSessions, setHasLoadedSessions] = useState(false)
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isSigningOut, setIsSigningOut] = useState(false)
+  const [loadedSessionsFromServer, setLoadedSessionsFromServer] = useState<Set<string>>(new Set())
+  const [correctionMode, setCorrectionMode] = useState(false)
+  const [lastUserMessageId, setLastUserMessageId] = useState<string | null>(null)
+  const [frozenUserMessageId, setFrozenUserMessageId] = useState<string | null>(null)
+  const [newlyCreatedSessions, setNewlyCreatedSessions] = useState<Set<string>>(new Set())
+  // User-specific storage keys (only for messages now)
+  const getMessagesKey = useCallback((userId: string, sessionId: string) => `lumina_messages_v1_${userId}_${sessionId}`, [])
 
-  // Load persisted messages on mount
-  useEffect(() => {
+  // Clear all user-specific data from sessionStorage
+  const clearUserData = useCallback(() => {
     try {
-      const raw = sessionStorage.getItem(MESSAGES_KEY)
+      // Get all sessionStorage keys
+      const keys = Object.keys(sessionStorage)
+      
+      // Clear all lumina-related keys
+      keys.forEach(key => {
+        if (key.startsWith('lumina_')) {
+          sessionStorage.removeItem(key)
+        }
+      })
+      
+      console.log('🧹 Cleared all user data from sessionStorage')
+    } catch (error) {
+      console.warn('Error clearing user data from sessionStorage:', error)
+    }
+  }, [])
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+
+  const scrollToBottom = useCallback((force = false) => {
+    if (messagesEndRef.current) {
+      // Use immediate scroll for loading, smooth for user interactions
+      const behavior = force ? 'auto' : 'smooth'
+      messagesEndRef.current.scrollIntoView({ behavior })
+    }
+  }, [])
+
+  const normalizeSession = useCallback((session: any): ChatSession | null => {
+    if (!session) return null
+    const id = session.id || session.session_id || session.sessionId
+    if (!id) return null
+    const name = session.name || session.title || `Chat ${new Date().toLocaleDateString()}`
+    const createdAtRaw = session.created_at || session.createdAt || session.started_at || Date.now()
+    const lastMessageAtRaw = session.updated_at || session.last_message_at || session.lastMessageAt || createdAtRaw
+    const messageCount = session.message_count ?? session.messageCount ?? 0
+
+    return {
+      id: String(id), // Convert to string since database returns number
+      name,
+      createdAt: new Date(createdAtRaw),
+      lastMessageAt: new Date(lastMessageAtRaw),
+      messageCount
+    }
+  }, [])
+
+  const saveSessionToWebhook = useCallback(async (
+    user: User | null,
+    action: 'save' | 'load' | 'delete' | 'create',
+    sessionId?: string,
+    sessionTitle?: string
+  ) => {
+    if (!user) return // Only save for logged-in users
+    
+    try {
+      const { data: authData } = await supabase.auth.getSession()
+      const accessToken = authData.session?.access_token
+
+      const payload: Record<string, any> = {
+        action,
+        session_id: sessionId || null
+      }
+
+      if ((action === 'save' || action === 'create') && sessionTitle) {
+        payload.title = sessionTitle
+      }
+
+      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/chat-session', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      })
+
+      if (!response.ok) {
+        console.warn(`Failed to ${action} session via edge function:`, response.status)
+        throw new Error(`API call failed with status ${response.status}`)
+      } else {
+        if (action === 'load') {
+          const data = await response.json()
+          return data.result?.sessions || []
+        }
+        if (action === 'create') {
+          const data = await response.json()
+          return data.result?.session || null
+        }
+        return true
+      }
+    } catch (error) {
+      console.warn(`Error ${action} session via edge function:`, error)
+      throw error // Re-throw the error so it can be caught by the calling function
+    }
+  }, [])
+
+  const loadSessions = useCallback(async (user: User) => {
+    if (isLoadingSessions) {
+      return
+    }
+    
+    try {
+      setIsLoadingSessions(true)
+      const sessions = await saveSessionToWebhook(user, 'load')
+      if (sessions && Array.isArray(sessions) && sessions.length > 0) {
+        const normalized = sessions
+          .map(normalizeSession)
+          .filter((session): session is ChatSession => session !== null)
+
+        if (normalized.length > 0) {
+          setSessions(normalized)
+          setCurrentSessionId(normalized[0].id)
+          setHasLoadedSessions(true)
+        } else {
+          setSessions([])
+          setHasLoadedSessions(true)
+        }
+      } else {
+        setSessions([])
+        setHasLoadedSessions(true)
+      }
+    } catch (error) {
+      console.warn('Error loading sessions from edge function:', error)
+      setSessions([])
+      setHasLoadedSessions(true) // Set to true even on error to prevent infinite retries
+    } finally {
+      setIsLoadingSessions(false)
+    }
+  }, [saveSessionToWebhook, isLoadingSessions, normalizeSession])
+
+  const saveMessagesForSession = useCallback((sessionId: string, messages: Message[], userId: string) => {
+    try {
+      const key = getMessagesKey(userId, sessionId)
+      const serializable = messages.map(m => ({ ...m, timestamp: (m.timestamp as Date).toISOString() }))
+      sessionStorage.setItem(key, JSON.stringify(serializable))
+    } catch (error) {
+      console.warn('Error saving messages to sessionStorage:', error)
+    }
+  }, [getMessagesKey])
+
+  // Load messages from server for a specific session
+  const loadMessagesFromServer = useCallback(async (sessionId: string, user: User) => {
+    try {
+      const { data: authData } = await supabase.auth.getSession()
+      const accessToken = authData.session?.access_token
+
+      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/messages-action', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: 'load',
+          session_id: sessionId
+        })
+      })
+
+      if (!response.ok) {
+        console.warn('Failed to load messages from server:', response.status)
+        return null
+      }
+
+      const data = await response.json()
+      
+      // Parse the messages from server response
+      // Check different possible structures for messages
+      let messagesArray = null
+      
+      if (data.result?.messages && Array.isArray(data.result.messages)) {
+        messagesArray = data.result.messages
+      } else if (data.messages && Array.isArray(data.messages)) {
+        messagesArray = data.messages
+      } else if (data.data?.messages && Array.isArray(data.data.messages)) {
+        messagesArray = data.data.messages
+      } else if (Array.isArray(data)) {
+        messagesArray = data
+      }
+      
+      if (messagesArray) {
+        const serverMessages: Message[] = messagesArray.map((msg: any) => ({
+          id: msg.id || `loaded_${Date.now()}`, // Use database ID, temp fallback for loaded messages
+          content: msg.content || msg.message || '',
+          role: msg.role === 'llm' ? 'assistant' : 'user',
+          timestamp: new Date(msg.metadata?.timestamp || msg.timestamp || msg.created_at || Date.now()),
+          attachments: msg.attachments || []
+        }))
+        
+        // Don't save here - let the persist messages useEffect handle it
+        return serverMessages
+      }
+      
+      return null
+    } catch (error) {
+      console.warn('Error loading messages from server:', error)
+      return null
+    }
+  }, [])
+
+  const loadMessagesForSession = useCallback((sessionId: string, userId: string) => {
+    try {
+      const key = getMessagesKey(userId, sessionId)
+      const raw = sessionStorage.getItem(key)
       if (raw) {
         const parsed = JSON.parse(raw) as Array<{
           id: string; content: string; role: 'user' | 'assistant'; timestamp: string; attachments?: string[]
         }>
-        const restored: Message[] = parsed.map(m => ({ ...m, timestamp: new Date(m.timestamp) }))
-        if (restored.length > 0) setMessages(restored)
+        const restored: Message[] = parsed.map(m => ({ 
+          ...m, 
+          timestamp: new Date(m.timestamp),
+          role: m.role as 'user' | 'assistant'
+        }))
+        return restored
       }
-    } catch {}
+    } catch (error) {
+      console.warn('Error loading messages from sessionStorage:', error)
+    }
+    return [{
+      id: '1',
+      content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+      role: 'assistant',
+      timestamp: new Date()
+    }]
+  }, [getMessagesKey])
+
+  // Load sessions from webhook when user logs in
+  useEffect(() => {
+    if (currentUser && !hasLoadedSessions && !isLoadingSessions) {
+      loadSessions(currentUser)
+    }
+  }, [currentUser, hasLoadedSessions, isLoadingSessions]) // Removed loadSessions from dependencies
+
+  // Auto-create session if none exists and user is logged in
+  useEffect(() => {
+    if (currentUser && hasLoadedSessions && sessions.length === 0 && !currentSessionId) {
+      // Auto-create a default session for new users
+      const autoCreateSession = async () => {
+        try {
+          const createdSession = await saveSessionToWebhook(currentUser, 'create', undefined, 'Default Chat')
+          if (createdSession) {
+            const normalizedSession = normalizeSession(createdSession)
+            if (normalizedSession) {
+              setSessions([normalizedSession])
+              setCurrentSessionId(normalizedSession.id)
+            }
+          }
+        } catch (error) {
+          console.warn('Error auto-creating session:', error)
+        }
+      }
+      autoCreateSession()
+    }
+  }, [currentUser, hasLoadedSessions, sessions.length, currentSessionId, saveSessionToWebhook, normalizeSession])
+
+  // Load messages for current session
+  useEffect(() => {
+    if (currentSessionId && currentUser) {
+      // Skip loading for newly created sessions - they already have default messages
+      if (newlyCreatedSessions.has(currentSessionId)) {
+        // Remove from newly created set since we're handling it now
+        setNewlyCreatedSessions(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(currentSessionId)
+          return newSet
+        })
+        return
+      }
+      
+      setIsLoadingSession(true)
+      
+      // Check if we've already loaded messages from server for this session
+      if (!loadedSessionsFromServer.has(currentSessionId)) {
+        loadMessagesFromServer(currentSessionId, currentUser).then(serverMessages => {
+          if (serverMessages && serverMessages.length > 0) {
+            setMessages(serverMessages)
+            setLoadedSessionsFromServer(prev => new Set(prev).add(currentSessionId))
+            
+            // Extract lastUserMessageId from the loaded messages
+            const userMessages = serverMessages.filter(msg => msg.role === 'user')
+            console.log('🔍 User messages found:', userMessages.length)
+            console.log('🔍 All user messages:', userMessages.map(m => ({ id: m.id, role: m.role, content: m.content.substring(0, 30) + '...' })))
+            
+            if (userMessages.length > 0) {
+              const lastUserMessage = userMessages[userMessages.length - 1]
+              console.log('🔍 Last user message:', lastUserMessage)
+              console.log('🔍 Last user message ID:', lastUserMessage.id, 'Type:', typeof lastUserMessage.id)
+              
+              if (lastUserMessage && lastUserMessage.id && (typeof lastUserMessage.id === 'string' || typeof lastUserMessage.id === 'number')) {
+                console.log('✅ Setting lastUserMessageId to:', lastUserMessage.id)
+                setLastUserMessageId(String(lastUserMessage.id))
+              } else {
+                console.log('❌ Invalid last user message ID')
+                setLastUserMessageId(null)
+              }
+            } else {
+              console.log('❌ No user messages found')
+              setLastUserMessageId(null)
+            }
+            
+            // Force scroll to bottom after server messages are loaded
+            setTimeout(() => scrollToBottom(true), 150)
+          } else {
+            // No messages from server, use default welcome message for new sessions
+            setMessages([{
+              id: 'welcome_message',
+              content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+              role: 'assistant',
+              timestamp: new Date()
+            }])
+            setLastUserMessageId(null)
+            // Don't mark as loaded from server if no messages were found
+          }
+          setIsLoadingSession(false)
+          setIsSwitchingSession(false)
+        }).catch(error => {
+          console.warn('Error loading messages from server:', error)
+          // Fallback to default welcome message
+          setMessages([{
+            id: 'welcome_message',
+            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+            role: 'assistant',
+            timestamp: new Date()
+          }])
+          setLastUserMessageId(null)
+          setIsLoadingSession(false)
+          setIsSwitchingSession(false)
+        })
+      } else {
+        // Already loaded from server, use local storage
+        const sessionMessages = loadMessagesForSession(currentSessionId, currentUser.id)
+        setMessages(sessionMessages as Message[])
+        
+        // Extract lastUserMessageId from the local messages
+        const userMessages = sessionMessages.filter(msg => msg.role === 'user')
+        if (userMessages.length > 0) {
+          const lastUserMessage = userMessages[userMessages.length - 1]
+          if (lastUserMessage && lastUserMessage.id && (typeof lastUserMessage.id === 'string' || typeof lastUserMessage.id === 'number')) {
+            setLastUserMessageId(String(lastUserMessage.id))
+          } else {
+            setLastUserMessageId(null)
+          }
+        } else {
+          setLastUserMessageId(null)
+        }
+        
+        // Force scroll to bottom after local messages are loaded
+        setTimeout(() => scrollToBottom(true), 150)
+        setTimeout(() => {
+          setIsLoadingSession(false)
+          setIsSwitchingSession(false)
+        }, 100)
+      }
+    }
+  }, [currentSessionId, currentUser, loadMessagesForSession, newlyCreatedSessions])
+
+  // Persist messages for current session
+  useEffect(() => {
+    if (currentSessionId && currentUser) {
+      saveMessagesForSession(currentSessionId, messages, currentUser.id)
+    }
+  }, [messages, currentSessionId, currentUser, saveMessagesForSession])
+
+  // Track if we're currently loading a session to avoid webhook calls during load
+  const [isLoadingSession, setIsLoadingSession] = useState(false)
+
+  // Update session metadata when messages change (for logged-in users)
+  useEffect(() => {
+    if (currentUser && currentSessionId && messages.length > 1 && !isLoadingSession) {
+      // Use functional update to avoid dependency on sessions
+      setSessions(prev => {
+        const currentSession = prev.find(s => s.id === currentSessionId)
+        if (currentSession) {
+          const updatedSession = {
+            ...currentSession,
+            lastMessageAt: new Date(),
+            messageCount: messages.length - 1 // Subtract 1 for the initial greeting
+          }
+          
+          // Return updated sessions (no webhook call - only update local state)
+          return prev.map(s => s.id === currentSessionId ? updatedSession : s)
+        }
+        return prev
+      })
+    }
+  }, [messages, currentUser, currentSessionId, isLoadingSession])
+
+  // Session management handlers
+  const handleCreateSession = useCallback(async () => {
+    if (!sessionName.trim() || !currentUser) return
+    
+    try {
+      // Create session via edge function
+      const createdSession = await saveSessionToWebhook(currentUser, 'create', undefined, sessionName.trim())
+      
+      if (createdSession) {
+        const normalizedSession = normalizeSession(createdSession)
+        if (normalizedSession) {
+          const updatedSessions = [normalizedSession, ...sessions]
+          setSessions(updatedSessions)
+          setCurrentSessionId(normalizedSession.id)
+          setSessionName('')
+          
+          // Mark this session as newly created to prevent message loading override
+          setNewlyCreatedSessions(prev => new Set(prev).add(normalizedSession.id))
+          
+          // Reset messages to default greeting for new session
+          setMessages([{
+            id: '1',
+            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+            role: 'assistant',
+            timestamp: new Date()
+          }])
+        }
+      }
+    } catch (error) {
+      console.warn('Error creating session:', error)
+    }
+  }, [sessionName, sessions, currentUser, saveSessionToWebhook, normalizeSession])
+
+  const handleInlineCreateSession = useCallback(async () => {
+    if (!currentUser) return
+
+    try {
+      setIsCreatingSession(true)
+      const createdSession = await saveSessionToWebhook(currentUser, 'create', undefined, 'New Chat')
+      
+      if (createdSession) {
+        const normalizedSession = normalizeSession(createdSession)
+        if (normalizedSession) {
+          const updatedSessions = [normalizedSession, ...sessions]
+          setSessions(updatedSessions)
+          setCurrentSessionId(normalizedSession.id)
+          setSessionName(normalizedSession.name)
+          setIsCreatingSession(false)
+          
+          // Mark this session as newly created to prevent message loading override
+          setNewlyCreatedSessions(prev => new Set(prev).add(normalizedSession.id))
+          
+          // Reset messages to default greeting for new session
+          setMessages([{
+            id: 'welcome_message',
+            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+            role: 'assistant',
+            timestamp: new Date()
+          }])
+        }
+      }
+    } catch (error) {
+      console.warn('Error creating session:', error)
+      setIsCreatingSession(false)
+    }
+  }, [sessions, currentUser, saveSessionToWebhook, normalizeSession, setNewlyCreatedSessions])
+
+
+  const handleRenameSession = useCallback(async (sessionId: string, newName: string) => {
+    if (!currentUser || !newName.trim() || renamingSessionId) return // Prevent multiple renames
+    
+    try {
+      setRenamingSessionId(sessionId)
+      // Update the session name via edge function
+      await saveSessionToWebhook(currentUser, 'save', sessionId, newName.trim())
+      
+      // Update local state
+      const updatedSessions = sessions.map(s => 
+        s.id === sessionId ? { ...s, name: newName.trim() } : s
+      )
+      setSessions(updatedSessions)
+      setEditingSessionId(null)
+      setEditingSessionName('')
+    } catch (error) {
+      console.warn('Error renaming session:', error)
+    } finally {
+      setRenamingSessionId(null)
+    }
+  }, [sessions, currentUser, saveSessionToWebhook, renamingSessionId])
+
+  const handleStartRename = useCallback((sessionId: string, currentName: string) => {
+    setEditingSessionId(sessionId)
+    setEditingSessionName(currentName)
   }, [])
 
-  // Persist messages on change
-  useEffect(() => {
-    try {
-      const serializable = messages.map(m => ({ ...m, timestamp: (m.timestamp as Date).toISOString() }))
-      sessionStorage.setItem(MESSAGES_KEY, JSON.stringify(serializable))
-    } catch {}
-  }, [messages])
+  const handleCancelRename = useCallback(() => {
+    setEditingSessionId(null)
+    setEditingSessionName('')
+  }, [])
 
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [loadingSessions, setLoadingSessions] = useState<Set<string>>(new Set())
+  const [isSwitchingSession, setIsSwitchingSession] = useState(false)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility' | 'invite' | 'rebuild' | 'set-password'>('chat')
   const [navCollapsed, setNavCollapsed] = useState(true)
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false)
+  const [isCreatingSession, setIsCreatingSession] = useState(false)
+  const [newsPanelCollapsed, setNewsPanelCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newsSheetOpen, setNewsSheetOpen] = useState(false)
+  const [newsItems, setNewsItems] = useState<NewsItem[]>([])
   const [authOpen, setAuthOpen] = useState(false)
-  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Roles / RBAC
   const roles = Array.isArray((currentUser as any)?.app_metadata?.roles)
@@ -525,17 +1023,106 @@ function App() {
     : []
   const hasAdmin = roles.includes('admin')
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  const handleSwitchSession = useCallback((sessionId: string) => {
+    if (!currentUser) return
+    setIsSwitchingSession(true)
+    setCurrentSessionId(sessionId)
+    // The useEffect will handle loading messages when currentSessionId changes
+    // The switching animation will be stopped by the message loading useEffect
+  }, [currentUser])
+
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
+    if (!currentUser || deletingSessionId) return // Prevent multiple deletions
+    
+    try {
+      setDeletingSessionId(sessionId)
+      setDeleteError(null) // Clear any previous errors
+      
+      // Delete the session via edge function
+      await saveSessionToWebhook(currentUser, 'delete', sessionId)
+      
+      // Only update local state if API call succeeds
+      const updatedSessions = sessions.filter(s => s.id !== sessionId)
+      setSessions(updatedSessions)
+      
+      // If deleting current session, switch to first available or create new
+      if (currentSessionId === sessionId) {
+        if (updatedSessions.length > 0) {
+          handleSwitchSession(updatedSessions[0].id)
+        } else {
+          setCurrentSessionId(null)
+          setMessages([{
+            id: '1',
+            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+            role: 'assistant',
+            timestamp: new Date()
+          }])
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting session:', error)
+      setDeleteError('Failed to delete session. Please try again.')
+    } finally {
+      setDeletingSessionId(null)
+    }
+  }, [sessions, currentSessionId, currentUser, saveSessionToWebhook, handleSwitchSession, deletingSessionId])
+
+  // Format published date and source for news list
+  const formatNewsMeta = useCallback((publishedAt?: string, source?: string) => {
+    if (!publishedAt && !source) return ''
+    if (!publishedAt) return source || ''
+    const date = new Date(publishedAt)
+    const dateStr = isNaN(date.getTime()) ? '' : date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    return `${dateStr}${source ? ` · ${source}` : ''}`.trim()
+  }, [])
+
+  // Fetch latest news from Supabase table news_articles
+  const fetchNews = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('news_articles')
+        .select('id, url, headline, published_at, source')
+        .order('published_at', { ascending: false })
+        .limit(30)
+      if (error) {
+        console.warn('news_articles fetch error:', error.message)
+        return
+      }
+      const mapped: NewsItem[] = (data as any[]).map((r: any) => ({
+        id: String(r.id),
+        title: r.headline || r.source || 'Untitled',
+        image: '/vite.svg',
+        readTime: formatNewsMeta(r.published_at, r.source),
+        url: r.url || undefined
+      }))
+      setNewsItems(mapped)
+    } catch (e: any) {
+      console.warn('news_articles fetch failed:', e?.message || e)
+    }
+  }, [formatNewsMeta])
+
+  // Load on mount
+  useEffect(() => {
+    fetchNews()
+  }, [fetchNews])
+
+  // Lazy fetch when opening the mobile sheet
+  useEffect(() => {
+    if (newsSheetOpen && newsItems.length === 0) fetchNews()
+  }, [newsSheetOpen, newsItems.length, fetchNews])
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+    // Use a longer delay to ensure DOM has fully rendered, especially for large message loads
+    const timeoutId = setTimeout(() => {
+      scrollToBottom(true) // Force immediate scroll for message loading
+    }, 150)
+    
+    return () => clearTimeout(timeoutId)
+  }, [messages, scrollToBottom])
 
   useEffect(() => {
-    scrollToBottom()
-  }, [attachedFiles])
+    scrollToBottom() // Smooth scroll for file attachments
+  }, [attachedFiles, scrollToBottom])
 
   // Hash-based route detection for password setup
   useEffect(() => {
@@ -570,17 +1157,26 @@ function App() {
         const newId = createNewUserId()
         setUserId(newId)
         localStorage.setItem('lumina_user_id', newId)
-        console.log('🔁 Session user ID reset due to auth change:', event, newId)
         // Only clear messages on explicit sign-out; keep history on sign-in
         if (event === 'SIGNED_OUT') {
+          // Clear all user-specific data from sessionStorage
+          clearUserData()
+          
           setMessages([
             {
-              id: Date.now().toString(),
+              id: 'welcome_message',
               content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
               role: 'assistant',
               timestamp: new Date()
             }
           ])
+          // Clear sessions and current session on logout
+          setSessions([])
+          setCurrentSessionId(null)
+          setHasLoadedSessions(false)
+          setIsLoadingSessions(false)
+          setLoadedSessionsFromServer(new Set())
+          setCorrectionMode(false)
         }
       }
     })
@@ -588,24 +1184,44 @@ function App() {
       mounted = false
       sub.subscription.unsubscribe()
     }
-  }, [createNewUserId])
+  }, [createNewUserId, clearUserData])
 
   const handleSignOut = async () => {
+    if (isSigningOut) return // Prevent multiple sign outs
+    
+    try {
+      setIsSigningOut(true)
     await supabase.auth.signOut()
     setAuthOpen(false)
     // Also regenerate userId on manual sign out
     const newId = createNewUserId()
     setUserId(newId)
     localStorage.setItem('lumina_user_id', newId)
+    
+    // Clear all user-specific data from sessionStorage
+    clearUserData()
+    
     // Clear chat messages to default greeting
     setMessages([
       {
-        id: Date.now().toString(),
+        id: 'welcome_message',
         content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
         role: 'assistant',
         timestamp: new Date()
       }
     ])
+      // Clear sessions and current session on manual sign out
+      setSessions([])
+      setCurrentSessionId(null)
+      setHasLoadedSessions(false)
+      setIsLoadingSessions(false)
+      setLoadedSessionsFromServer(new Set())
+      setCorrectionMode(false)
+    } catch (error) {
+      console.warn('Error signing out:', error)
+    } finally {
+      setIsSigningOut(false)
+    }
   }
 
     // Excel Download Component with Real Image Embedding
@@ -1069,7 +1685,7 @@ function App() {
 
   // Memoized function to preprocess content and fix markdown patterns
   const preprocessMarkdown = useCallback((text: string): { content: string; excelData?: any; filename?: string } => {
-    let processed = text
+    let processed = String(text || '')
     let excelData = null
     let filename: string | undefined = undefined
     
@@ -1218,12 +1834,12 @@ function App() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if ((!inputValue.trim() && attachedFiles.length === 0) || isLoading) return
+    if ((!inputValue.trim() && attachedFiles.length === 0) || (isLoading && loadingSessions.has(currentSessionId || '')) || isSwitchingSession) return
 
     const filesToSend = [...attachedFiles]
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: '', // Will be set from database response
       content: inputValue || (filesToSend.length > 0 ? `Uploaded ${filesToSend.length} file(s).` : ''),
       role: 'user',
       timestamp: new Date(),
@@ -1231,11 +1847,20 @@ function App() {
     }
 
     setMessages(prev => [...prev, userMessage])
+    // Don't set lastUserMessageId yet - will be set from database response
     setInputValue('')
+    // Reset textarea height when clearing input
+    if (textareaRef.current) {
+      textareaRef.current.style.height = '3rem' // Reset to minHeight
+    }
     // Clear attachments immediately for UX
     setAttachedFiles([])
     if (fileInputRef.current) fileInputRef.current.value = ''
     setIsLoading(true)
+    // Add current session to loading sessions
+    if (currentSessionId) {
+      setLoadingSessions(prev => new Set(prev).add(currentSessionId))
+    }
 
     try {
       // Prepare auth token for server-side verification in n8n
@@ -1248,27 +1873,53 @@ function App() {
         form.append('chatInput', userMessage.content)
         form.append('timestamp', userMessage.timestamp.toISOString())
         form.append('userId', userId)
-        form.append('sessionId', userId)
+        form.append('sessionId', currentSessionId || userId)
         if (accessToken) form.append('accessToken', accessToken)
+        // Always include the last user message ID for potential corrections (database ID)
+        // Use frozen ID if in correction mode, otherwise use current lastUserMessageId
+        const messageIdToSend = frozenUserMessageId || lastUserMessageId
+        console.log('📤 FormData - Sending lastUserMessageId:', {
+          messageIdToSend,
+          frozenUserMessageId,
+          lastUserMessageId,
+          correctionMode
+        })
+        if (messageIdToSend) form.append('lastUserMessageId', messageIdToSend)
+        form.append('correction_mode', correctionMode.toString())
+        if (!lastUserMessageId) form.append('generateSessionName', 'true')
         for (const f of filesToSend) form.append('files', f, f.name)
         response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
           method: 'POST',
           body: form
         })
-      } else {
-        response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            chatInput: userMessage.content,
-          timestamp: userMessage.timestamp.toISOString(),
-            userId: userId,
-            sessionId: userId,
-            accessToken: accessToken || null
-        })
-      })
+       } else {
+         const messageIdToSend = frozenUserMessageId || lastUserMessageId
+         console.log('📤 JSON - Sending lastUserMessageId:', {
+           messageIdToSend,
+           frozenUserMessageId,
+           lastUserMessageId,
+           correctionMode
+         })
+         
+         response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
+         method: 'POST',
+         headers: {
+           'Content-Type': 'application/json'
+         },
+         body: JSON.stringify({
+           chatInput: userMessage.content,
+           timestamp: userMessage.timestamp.toISOString(),
+           userId: userId,
+           sessionId: currentSessionId || null,
+           accessToken: accessToken || null,
+           // Always include the last user message ID for potential corrections (database ID from previous response)
+           // Use frozen ID if in correction mode, otherwise use current lastUserMessageId
+           lastUserMessageId: messageIdToSend,
+           correction_mode: correctionMode,
+           // Generate session name only for the first message in a session
+           ...(!lastUserMessageId && { generateSessionName: true })
+         })
+       })
       }
 
       if (!response.ok) {
@@ -1276,8 +1927,83 @@ function App() {
       }
 
       const data = await response.json()
+      
+      // Update correction mode based on webhook response
+      if (typeof data.correction_mode === 'boolean') {
+        setCorrectionMode(data.correction_mode)
+        
+        if (data.correction_mode === true) {
+          // Freeze the current lastUserMessageId when correction mode starts
+          if (lastUserMessageId && !frozenUserMessageId) {
+            setFrozenUserMessageId(lastUserMessageId)
+          }
+        } else if (data.correction_mode === false) {
+          // Unfreeze when correction mode ends
+          setFrozenUserMessageId(null)
+        }
+      }
+      
+      // Update the user message with database ID if available
+      if (data.usr_msg_id) {
+        setMessages(prev => prev.map(msg => 
+          msg.id === userMessage.id 
+            ? { ...msg, id: data.usr_msg_id }
+            : msg
+        ))
+        
+        // Always update lastUserMessageId with the current message's database ID
+        // This ensures we use the actual user message, not the frozen one
+        setLastUserMessageId(data.usr_msg_id)
+      }
+      
+      // Handle generated session name from webhook response
+      if (data.generated_session_name && currentSessionId) {
+        // Check if this is a "New Chat" session that needs to be renamed
+        const currentSession = sessions.find(s => s.id === currentSessionId)
+        if (currentSession && currentSession.name === 'New Chat') {
+          try {
+            // Rename the session using the generated name
+            await saveSessionToWebhook(currentUser, 'save', currentSessionId, data.generated_session_name)
+            
+            // Animate the session name change
+            const sessionElement = document.querySelector(`[data-session-id="${currentSessionId}"] .session-name`) as HTMLElement
+            if (sessionElement) {
+              // Fade out
+              sessionElement.style.transition = 'opacity 0.3s ease-in-out'
+              sessionElement.style.opacity = '0'
+              
+              // Wait for fade out, then update and fade in
+              setTimeout(() => {
+                // Update local session state
+                setSessions(prev => prev.map(session => 
+                  session.id === currentSessionId 
+                    ? { ...session, name: data.generated_session_name }
+                    : session
+                ))
+                
+                // Update current session name
+                setSessionName(data.generated_session_name)
+                
+                // Fade in
+                sessionElement.style.opacity = '1'
+              }, 300)
+            } else {
+              // Fallback if element not found
+              setSessions(prev => prev.map(session => 
+                session.id === currentSessionId 
+                  ? { ...session, name: data.generated_session_name }
+                  : session
+              ))
+              setSessionName(data.generated_session_name)
+            }
+          } catch (error) {
+            console.warn('Error renaming session with generated name:', error)
+          }
+        }
+      }
+
       const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: data.llm_msg_id || `temp_${Date.now()}`, // Use database ID from webhook response, temp fallback
         content: data.output || data.response || data.message || 'I received your message but couldn\'t generate a proper response.',
         role: 'assistant',
         timestamp: new Date()
@@ -1286,7 +2012,7 @@ function App() {
     } catch (error) {
       console.error('Error sending message:', error)
       const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
+        id: `error_${Date.now()}`,
         content: 'Sorry, I\'m having trouble connecting to the server right now. Please try again later.',
         role: 'assistant',
         timestamp: new Date()
@@ -1294,6 +2020,14 @@ function App() {
       setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
+      // Remove current session from loading sessions
+      if (currentSessionId) {
+        setLoadingSessions(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(currentSessionId)
+          return newSet
+        })
+      }
     }
   }
 
@@ -1334,9 +2068,20 @@ function App() {
               {currentUser ? (
                        <button 
                   onClick={handleSignOut}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 text-sm font-medium shadow-md hover:shadow-lg transition-shadow"
+                  disabled={isSigningOut}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 text-sm font-medium shadow-md hover:shadow-lg transition-shadow disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  Sign out
+                  {isSigningOut ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Signing out...
+                    </>
+                  ) : (
+                    'Sign out'
+                  )}
                 </button>
               ) : (
                 <button
@@ -1371,6 +2116,20 @@ function App() {
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
                       <span>Chat</span>
                     </button>
+                    
+                    {/* Mobile Sessions Button */}
+                    {currentUser && (
+                      <button 
+                        onClick={() => { setSessionPanelOpen(!sessionPanelOpen); setMobileNavOpen(false) }} 
+                        className="flex items-center gap-3 w-full px-2 py-2 rounded-md text-gray-700 hover:bg-gray-50"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/>
+                        </svg>
+                        <span>Sessions ({sessions.length})</span>
+                      </button>
+                    )}
+                    
                     <button 
                       onClick={() => { setNewsSheetOpen(true); setMobileNavOpen(false) }} 
                       className="flex items-center gap-3 w-full px-2 py-2 rounded-md text-gray-700 hover:bg-gray-50"
@@ -1446,9 +2205,20 @@ function App() {
                             </button>
                             <button
                               onClick={async () => { await handleSignOut(); setMobileNavOpen(false); }}
-                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                              disabled={isSigningOut}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                             >
-                              Sign out
+                              {isSigningOut ? (
+                                <>
+                                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  Signing out...
+                                </>
+                              ) : (
+                                'Sign out'
+                              )}
               </button>
             </div>
           </div>
@@ -1483,21 +2253,37 @@ function App() {
                              <button 
                     onClick={() => setCurrentPage('chat')}
                     aria-current={currentPage === 'chat' ? 'page' : undefined}
-                    className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                    className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'chat' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
                     title="Chat"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
-                    <span className={navCollapsed ? 'hidden' : ''}>Chat</span>
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/></svg>
+                    <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Chat</span>
                              </button>
+                             
+                             {/* Session Panel Toggle Button */}
+                             {currentUser && (
+                               <button
+                                 onClick={() => setSessionPanelOpen(!sessionPanelOpen)}
+                                 className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 text-gray-600 hover:bg-gray-50`}
+                                 title={sessionPanelOpen ? 'Close Sessions' : 'Open Sessions'}
+                               >
+                                 <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/>
+                                 </svg>
+                                 <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>
+                                   {sessionPanelOpen ? 'Close Sessions' : 'Sessions'}
+                                 </span>
+                               </button>
+                             )}
                   {hasAdmin && (
                     <button
                       onClick={() => setCurrentPage('upload')}
                       aria-current={currentPage === 'upload' ? 'page' : undefined}
-                      className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'upload' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
                       title="Upload Documents"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
-                      <span className={navCollapsed ? 'hidden' : ''}>Upload Documents</span>
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 12v-8m0 0l-4 4m4-4l4 4"/></svg>
+                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Upload Documents</span>
                              </button>
                   )}
                   
@@ -1505,40 +2291,42 @@ function App() {
                            <button 
                       onClick={() => setCurrentPage('visibility')}
                       aria-current={currentPage === 'visibility' ? 'page' : undefined}
-                      className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'visibility' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
                       title="Document Visibility"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                      <span className={navCollapsed ? 'hidden' : ''}>Document Visibility</span>
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Document Visibility</span>
                            </button>
                   )}
                   {hasAdmin && (
                     <button
                       onClick={() => setCurrentPage('invite')}
                       aria-current={currentPage === 'invite' ? 'page' : undefined}
-                      className={`flex items-center w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center gap-0' : 'gap-3'} ${currentPage === 'invite' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'invite' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
                       title="Invite Admins"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
-                      <span className={navCollapsed ? 'hidden' : ''}>Invite Admins</span>
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
+                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Invite Admins</span>
                            </button>
                   )}
                   {hasAdmin && (
                     <button
                       onClick={() => { setCurrentPage('rebuild') }} 
                       aria-current={currentPage === 'rebuild' ? 'page' : undefined}
-                      className={`flex w-full px-2 py-2 rounded-md ${navCollapsed ? 'justify-center items-center gap-0' : 'items-center gap-3'} ${currentPage === 'rebuild' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'rebuild' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
                       title="Rebuild Search Index"
                     >
-                      <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.5 12a7.5 7.5 0 0112.75-5.06M19.5 12a7.5 7.5 0 01-12.75 5.06M16.5 3V7.5H21M7.5 21H3V16.5"/></svg>
-                      <span className={navCollapsed ? 'hidden' : ''}>Rebuild Search Index</span>
+                      <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.5 12a7.5 7.5 0 0112.75-5.06M19.5 12a7.5 7.5 0 01-12.75 5.06M16.5 3V7.5H21M7.5 21H3V16.5"/></svg>
+                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Rebuild Search Index</span>
                            </button>
                   )}
+                  
+                  
                   {/* Removed non-functional links on desktop */}
                 </nav>
                 <div className={`border-t border-gray-200 pt-2 mt-2 pb-2 ${navCollapsed ? 'px-2' : 'px-2'}`}>
                   {currentUser ? (
-                    <div className={`flex items-start w-full ${navCollapsed ? 'justify-center gap-0' : 'gap-2'}`}>
+                    <div className={`flex items-start w-full gap-2`}>
                       <div className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 text-sm font-medium" title={currentUser.email || ''}>
                         {currentUser.email?.slice(0,1)?.toUpperCase() || 'U'}
                       </div>
@@ -1561,16 +2349,27 @@ function App() {
                            </button>
                             <button
                               onClick={async () => { await handleSignOut(); }}
-                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                              disabled={isSigningOut}
+                              className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                             >
-                              Sign out
+                              {isSigningOut ? (
+                                <>
+                                  <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  Signing out...
+                                </>
+                              ) : (
+                                'Sign out'
+                              )}
                            </button>
                           </div>
                          </div>
                        )}
                      </div>
                   ) : (
-                    <div className={`${navCollapsed ? 'flex items-center justify-center' : 'flex items-center justify-between'}`}>
+                    <div className={`flex items-center justify-between`}>
                       <div className="text-sm text-gray-600">{navCollapsed ? '' : 'Not signed in'}</div>
                       {!navCollapsed && (
                         <button
@@ -1584,24 +2383,213 @@ function App() {
                   )}
                 </div>
                            </div>
+       {/* Session Panel */}
+       {currentUser && (
+         <>
+           {/* Mobile overlay for session panel */}
+           {sessionPanelOpen && (
+             <div 
+               className="fixed inset-0 bg-black/40 z-40 lg:hidden"
+               onClick={() => setSessionPanelOpen(false)}
+             />
+           )}
+           <div className={`flex flex-col bg-white border-r border-gray-200 transition-all duration-200 ${sessionPanelOpen ? 'w-80' : 'w-0'} overflow-hidden ${sessionPanelOpen ? 'fixed lg:static inset-y-0 left-0 lg:right-0 z-50 lg:z-auto' : 'hidden lg:flex'}`}>
+                    <div className="p-4 border-b border-gray-200">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-semibold text-gray-900">Chat Sessions</h3>
+                        <button
+                          onClick={() => setSessionPanelOpen(false)}
+                          className="p-2 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                          title="Close sessions"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                      {/* New Session Button */}
+                      <button
+                        onClick={handleInlineCreateSession}
+                        disabled={isCreatingSession}
+                        className="flex items-center w-full px-4 py-3 rounded-lg border-2 border-dashed border-gray-300 text-gray-600 hover:border-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isCreatingSession ? (
+                          <>
+                            <svg className="w-5 h-5 mr-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            <span className="font-medium">Creating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                            </svg>
+                            <span className="font-medium">New Session</span>
+                          </>
+                        )}
+                      </button>
+                      
+                      {/* Session List */}
+                      {sessions.length > 0 ? (
+                        <div className="space-y-2">
+                          {sessions.map(session => (
+                            <div key={session.id} data-session-id={session.id} className="relative group">
+                              {editingSessionId === session.id ? (
+                                <div className="flex items-center w-full p-3 bg-gray-50 rounded-lg">
+                                  <input
+                                    type="text"
+                                    value={editingSessionName}
+                                    onChange={(e) => setEditingSessionName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && session.id && !renamingSessionId) {
+                                        handleRenameSession(session.id, editingSessionName)
+                                      } else if (e.key === 'Escape') {
+                                        handleCancelRename()
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if (session.id && editingSessionName.trim() && !renamingSessionId) {
+                                        const currentSession = sessions.find(s => s.id === session.id)
+                                        if (currentSession && currentSession.name !== editingSessionName.trim()) {
+                                          handleRenameSession(session.id, editingSessionName)
+                                        } else {
+                                          handleCancelRename()
+                                        }
+                                      }
+                                    }}
+                                    className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    autoFocus
+                                  />
+                                  <div className="flex gap-2 ml-3">
+                                    <button
+                                      onClick={() => session.id && handleRenameSession(session.id, editingSessionName)}
+                                      disabled={renamingSessionId === session.id}
+                                      className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                                    >
+                                      {renamingSessionId === session.id ? 'Saving...' : 'Save'}
+                                    </button>
+                                    <button
+                                      onClick={handleCancelRename}
+                                      className="px-3 py-1 text-xs bg-gray-500 text-white rounded hover:bg-gray-600"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleSwitchSession(session.id)}
+                                  className={`flex items-center w-full p-3 rounded-lg transition-colors ${
+                                    currentSessionId === session.id 
+                                      ? 'bg-blue-100 text-blue-900 border-2 border-blue-200' 
+                                      : 'text-gray-700 hover:bg-gray-50 border-2 border-transparent'
+                                  }`}
+                                >
+                                  <svg className="w-5 h-5 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/>
+                                  </svg>
+                                   <div className="flex-1 min-w-0 text-left">
+                                     <div className="font-medium truncate session-name">{session.name}</div>
+                                   </div>
+                                  <div className="flex gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleStartRename(session.id, session.name)
+                                      }}
+                                      className="p-1 text-gray-400 hover:text-gray-600"
+                                      title="Rename session"
+                                    >
+                                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                      </svg>
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleDeleteSession(session.id)
+                                      }}
+                                      disabled={deletingSessionId === session.id}
+                                      className="p-1 text-gray-400 hover:text-red-600 disabled:opacity-50"
+                                      title="Delete session"
+                                    >
+                                      {deletingSessionId === session.id ? (
+                                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        </svg>
+                                      ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                        </svg>
+                                      )}
+                                    </button>
+                                  </div>
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-gray-500">
+                          <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.264 0-2.468-.23-3.562-.648L3 20l.944-3.305C3.338 15.419 3 13.749 3 12 3 7.582 7.03 4 12 4s9 3.582 9 8z"/>
+                          </svg>
+                          <p className="text-sm">No sessions yet</p>
+                          <p className="text-xs text-gray-400 mt-1">Create your first session to get started</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+
                 {/* Main Content */}
                 <div className="flex-1 flex flex-col overflow-hidden min-w-0 lg:ml-0">
                   {currentPage === 'chat' && (
                     <>
+
         {/* Chat Messages */}
                     <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pb-28 w-full">
           <div className="max-w-4xl mx-auto w-full">
+            {isSwitchingSession ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="flex flex-col items-center space-y-3">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                  <p className="text-gray-500 text-sm">Loading session...</p>
+                </div>
+              </div>
+            ) : (
+              <>
             {messages.map((message) => (
                         <MessageContainer key={message.id} message={message} preprocessMarkdown={preprocessMarkdown} ExcelDownload={ExcelDownload} userInitial={currentUser?.email?.slice(0,1)?.toUpperCase() || 'U'} />
             ))}
-            {isLoading && <LoadingIndicator />}
+                {isLoading && loadingSessions.has(currentSessionId || '') && <LoadingIndicator />}
+              </>
+            )}
             <div ref={messagesEndRef} />
         </div>
       </div>
 
         {/* Chat Input */}
-                    <div className={`fixed bottom-0 p-4 z-20 lg:z-40 left-0 right-0 ${navCollapsed ? 'lg:left-16' : 'lg:left-60'} lg:right-80`}>
+                     <div className={`fixed bottom-0 p-4 z-20 lg:z-40 left-0 right-0 ${navCollapsed ? 'lg:left-16' : 'lg:left-60'} ${newsPanelCollapsed ? 'lg:right-16' : 'lg:right-80'}`}>
         <div className="max-w-4xl mx-auto">
+          {/* Correction Mode Label */}
+          {correctionMode && (
+            <div className="mb-2 flex items-center justify-center">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-amber-100 border border-amber-200 rounded-full text-amber-800 text-sm font-medium">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+                Correction Mode
+              </div>
+            </div>
+          )}
                       <div className="border border-gray-200 bg-white/90 backdrop-blur rounded-2xl shadow-xl p-2">
           <form onSubmit={handleSubmit} className="relative">
           {attachedFiles.length > 0 && (
@@ -1629,6 +2617,7 @@ function App() {
               }} />
             </div>
             <textarea
+              ref={textareaRef}
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={(e) => {
@@ -1649,7 +2638,7 @@ function App() {
                 }}
                 placeholder="Silakan bertanya apa saja mengenai lighting ... atau lighting arsitektur ?"
               className="w-full border border-gray-300 rounded-2xl pl-10 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 shadow-sm transition-shadow resize-none min-h-[3rem] overflow-y-hidden"
-                disabled={isLoading}
+                disabled={(isLoading && loadingSessions.has(currentSessionId || '')) || isSwitchingSession}
               rows={1}
               style={{ height: 'auto', minHeight: '3rem' }}
                 onInput={(e) => {
@@ -1663,7 +2652,7 @@ function App() {
             />
             <button
               type="submit"
-              disabled={(!inputValue.trim() && attachedFiles.length === 0) || isLoading}
+              disabled={(!inputValue.trim() && attachedFiles.length === 0) || (isLoading && loadingSessions.has(currentSessionId || '')) || isSwitchingSession}
                 className="absolute right-3 top-1/2 transform -translate-y-1/2 text-yellow-500 hover:text-yellow-600 disabled:text-gray-400"
               >
               <svg className="w-6 h-6 transform -translate-y-0.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -1729,32 +2718,63 @@ function App() {
             </div>
 
             {/* Sidebar (slides from right on mobile) */}
-            <div className={`${sidebarOpen ? 'translate-x-0' : 'translate-x-full'} fixed inset-y-0 right-0 z-50 w-80 bg-white shadow-2xl transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
+             <div className={`${sidebarOpen ? 'translate-x-0' : 'translate-x-full'} fixed inset-y-0 right-0 z-50 ${newsPanelCollapsed ? 'w-16' : 'w-80'} bg-white shadow-2xl transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
               <div className="flex flex-col h-full">
-                {/* News Section */}
+                 {/* News Panel Header */}
+                 <div className="flex items-center justify-between mb-6 p-4">
+                   {!newsPanelCollapsed && (
+                     <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide bg-gray-50 p-2 rounded-md shadow-sm">BERITA HARI INI</h2>
+                   )}
+                   <button
+                     onClick={() => setNewsPanelCollapsed(!newsPanelCollapsed)}
+                     className="p-2 rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
+                     title={newsPanelCollapsed ? 'Expand news panel' : 'Collapse news panel'}
+                   >
+                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={newsPanelCollapsed ? "M15 19l-7-7 7-7" : "M9 5l7 7-7 7"} />
+                     </svg>
+                   </button>
+                 </div>
+
+                 {/* News Section Content */}
+                 {!newsPanelCollapsed && (
                 <div className="flex-1 overflow-y-auto p-4">
-                  <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide mb-6 bg-gray-50 p-2 rounded-md shadow-sm">BERITA HARI INI</h2>
                   <div className="space-y-6">
-                    {mockNews.map((news) => (
-                      <div key={news.id} className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
-                        <img 
-                          src={news.image} 
-                          alt={news.title}
-                          className="w-full h-32 object-cover"
-                        />
-                        <div className="p-4">
-                          <h3 className="text-sm font-semibold text-gray-900 leading-tight mb-3">{news.title}</h3>
-                          <p className="text-xs text-blue-600 font-medium hover:text-blue-800 cursor-pointer">{news.readTime}</p>
+                    {(newsItems.length ? newsItems : mockNews).map((news) => (
+                      news.url ? (
+                        <a key={news.id} href={news.url} target="_blank" rel="noopener noreferrer" className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300 block">
+                          <img 
+                            src={news.image} 
+                            alt={news.title}
+                            className="w-full h-32 object-cover"
+                          />
+                          <div className="p-4">
+                            <h3 className="text-sm font-semibold text-gray-900 leading-tight mb-3">{news.title}</h3>
+                            <p className="text-xs text-blue-600 font-medium hover:text-blue-800 cursor-pointer">{news.readTime}</p>
+                          </div>
+                        </a>
+                      ) : (
+                        <div key={news.id} className="bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden hover:shadow-xl transition-shadow duration-300">
+                          <img 
+                            src={news.image} 
+                            alt={news.title}
+                            className="w-full h-32 object-cover"
+                          />
+                          <div className="p-4">
+                            <h3 className="text-sm font-semibold text-gray-900 leading-tight mb-3">{news.title}</h3>
+                            <p className="text-xs text-blue-600 font-medium">{news.readTime}</p>
+                          </div>
                         </div>
-                      </div>
+                      )
                     ))}
                   </div>
+                   </div>
+                 )}
 
                   {/* Admin section removed per request */}
-            </div>
-          </div>
-        </div>
-      </div>
+                 </div>
+               </div>
+             </div>
 
       {/* Overlay for mobile sidebar */}
       {sidebarOpen && (
@@ -1764,6 +2784,7 @@ function App() {
         />
       )}
         </>
+
 
       {/* Auth Modal */}
       {authOpen && (
@@ -1791,14 +2812,24 @@ function App() {
           </div>
           <div className="p-4 overflow-y-auto" style={{ maxHeight: 'calc(75vh - 48px)' }}>
             <div className="space-y-6">
-              {mockNews.map((news) => (
-                <div key={news.id} className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
-                  <img src={news.image} alt={news.title} className="w-full h-32 object-cover" />
-                  <div className="p-4">
-                    <h4 className="text-sm font-semibold text-gray-900 leading-tight mb-2">{news.title}</h4>
-                    <p className="text-xs text-blue-600 font-medium">{news.readTime}</p>
+              {(newsItems.length ? newsItems : mockNews).map((news) => (
+                news.url ? (
+                  <a key={news.id} href={news.url} target="_blank" rel="noopener noreferrer" className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden block">
+                    <img src={news.image} alt={news.title} className="w-full h-32 object-cover" />
+                    <div className="p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 leading-tight mb-2">{news.title}</h4>
+                      <p className="text-xs text-blue-600 font-medium">{news.readTime}</p>
+                    </div>
+                  </a>
+                ) : (
+                  <div key={news.id} className="bg-white rounded-xl shadow border border-gray-100 overflow-hidden">
+                    <img src={news.image} alt={news.title} className="w-full h-32 object-cover" />
+                    <div className="p-4">
+                      <h4 className="text-sm font-semibold text-gray-900 leading-tight mb-2">{news.title}</h4>
+                      <p className="text-xs text-blue-600 font-medium">{news.readTime}</p>
+                    </div>
                   </div>
-                </div>
+                )
               ))}
             </div>
           </div>
@@ -1848,7 +2879,7 @@ const MessageContainer = React.memo(({ message, preprocessMarkdown, ExcelDownloa
         
         {/* Message Content */}
         <div className="bg-blue-500 text-white rounded-lg px-4 py-3 shadow-lg min-w-0 overflow-hidden message-container">
-          <p className="text-sm leading-relaxed break-words">{message.content}</p>
+          <div className="text-sm leading-relaxed break-words whitespace-pre-wrap">{message.content}</div>
           {Array.isArray(message.attachments) && message.attachments.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {message.attachments.map((name, idx) => (
@@ -1976,8 +3007,18 @@ const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           )}
           {error && <div className="text-sm text-red-600">{error}</div>}
           {info && <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">{info}</div>}
-          <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white rounded-md px-3 py-2 text-sm disabled:bg-gray-300">
-            {loading ? (mode === 'signin' ? 'Signing in…' : 'Registering…') : (mode === 'signin' ? 'Sign in' : 'Register')}
+          <button type="submit" disabled={loading} className="w-full bg-blue-600 text-white rounded-md px-3 py-2 text-sm disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            {loading ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                {mode === 'signin' ? 'Signing in…' : 'Registering…'}
+              </>
+            ) : (
+              mode === 'signin' ? 'Sign in' : 'Register'
+            )}
           </button>
         </form>
         <div className="mt-3 text-xs text-gray-600">
@@ -1991,3 +3032,4 @@ const AuthModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     </div>
   )
 }
+

@@ -1,4 +1,11 @@
 # Change Log
+## [0.0.8] LUMINA 2025-01-15
+### Updates
+- Berita Hari Ini now collapsible
+- Create chat sessions, load messages
+- Auto rename chat sessions by chat context
+- Correction Mode UI, trigger by chat context (Admin only)
+
 ## [0.0.7] LUMINA 2025-09-22
 ### Updates
 - Upload page: selecting the same filename re-enables the Upload button by clearing the file input value before selection and after upload; files state resets after upload (`src/UploadPage.tsx`).
