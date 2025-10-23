@@ -495,14 +495,12 @@ function App() {
   // Chat session management
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
-  const [sessionName, setSessionName] = useState('')
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingSessionName, setEditingSessionName] = useState('')
   const [hasLoadedSessions, setHasLoadedSessions] = useState(false)
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [loadedSessionsFromServer, setLoadedSessionsFromServer] = useState<Set<string>>(new Set())
   const [correctionMode, setCorrectionMode] = useState(false)
@@ -653,7 +651,7 @@ function App() {
   }, [getMessagesKey])
 
   // Load messages from server for a specific session
-  const loadMessagesFromServer = useCallback(async (sessionId: string, user: User) => {
+  const loadMessagesFromServer = useCallback(async (sessionId: string) => {
     try {
       const { data: authData } = await supabase.auth.getSession()
       const accessToken = authData.session?.access_token
@@ -784,7 +782,7 @@ function App() {
       
       // Check if we've already loaded messages from server for this session
       if (!loadedSessionsFromServer.has(currentSessionId)) {
-        loadMessagesFromServer(currentSessionId, currentUser).then(serverMessages => {
+        loadMessagesFromServer(currentSessionId).then(serverMessages => {
           if (serverMessages && serverMessages.length > 0) {
             setMessages(serverMessages)
             setLoadedSessionsFromServer(prev => new Set(prev).add(currentSessionId))
@@ -899,37 +897,6 @@ function App() {
   }, [messages, currentUser, currentSessionId, isLoadingSession])
 
   // Session management handlers
-  const handleCreateSession = useCallback(async () => {
-    if (!sessionName.trim() || !currentUser) return
-    
-    try {
-      // Create session via edge function
-      const createdSession = await saveSessionToWebhook(currentUser, 'create', undefined, sessionName.trim())
-      
-      if (createdSession) {
-        const normalizedSession = normalizeSession(createdSession)
-        if (normalizedSession) {
-          const updatedSessions = [normalizedSession, ...sessions]
-          setSessions(updatedSessions)
-          setCurrentSessionId(normalizedSession.id)
-          setSessionName('')
-          
-          // Mark this session as newly created to prevent message loading override
-          setNewlyCreatedSessions(prev => new Set(prev).add(normalizedSession.id))
-          
-          // Reset messages to default greeting for new session
-          setMessages([{
-            id: '1',
-            content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
-            role: 'assistant',
-            timestamp: new Date()
-          }])
-        }
-      }
-    } catch (error) {
-      console.warn('Error creating session:', error)
-    }
-  }, [sessionName, sessions, currentUser, saveSessionToWebhook, normalizeSession])
 
   const handleInlineCreateSession = useCallback(async () => {
     if (!currentUser) return
@@ -944,7 +911,6 @@ function App() {
           const updatedSessions = [normalizedSession, ...sessions]
           setSessions(updatedSessions)
           setCurrentSessionId(normalizedSession.id)
-          setSessionName(normalizedSession.name)
           setIsCreatingSession(false)
           
           // Mark this session as newly created to prevent message loading override
@@ -1036,7 +1002,6 @@ function App() {
     
     try {
       setDeletingSessionId(sessionId)
-      setDeleteError(null) // Clear any previous errors
       
       // Delete the session via edge function
       await saveSessionToWebhook(currentUser, 'delete', sessionId)
@@ -1061,7 +1026,7 @@ function App() {
       }
     } catch (error) {
       console.error('Error deleting session:', error)
-      setDeleteError('Failed to delete session. Please try again.')
+      console.error('Failed to delete session. Please try again.')
     } finally {
       setDeletingSessionId(null)
     }
@@ -1981,8 +1946,6 @@ function App() {
                     : session
                 ))
                 
-                // Update current session name
-                setSessionName(data.generated_session_name)
                 
                 // Fade in
                 sessionElement.style.opacity = '1'
@@ -1994,7 +1957,6 @@ function App() {
                   ? { ...session, name: data.generated_session_name }
                   : session
               ))
-              setSessionName(data.generated_session_name)
             }
           } catch (error) {
             console.warn('Error renaming session with generated name:', error)
