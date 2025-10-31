@@ -1,4 +1,8 @@
 # Change Log
+## [0.0.9] LUMINA 2025-01-15
+### Updates
+- Document Visibility: Added delete button to remove documents and all related data
+
 ## [0.0.8] LUMINA 2025-01-15
 ### Updates
 - Berita Hari Ini now collapsible

@@ -18,6 +18,8 @@ const DocumentVisibility: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | number | null>(null)
+  const [deletingId, setDeletingId] = useState<string | number | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ doc: DocumentRow } | null>(null)
 
   useEffect(() => {
     const fetchDocs = async () => {
@@ -63,6 +65,44 @@ const DocumentVisibility: React.FC = () => {
     setUpdatingId(null)
   }
 
+  const handleDelete = async (doc: DocumentRow) => {
+    setError(null)
+    setDeletingId(doc.id)
+    
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+      if (!accessToken) {
+        setError('You must be signed in to delete documents.')
+        setDeletingId(null)
+        return
+      }
+
+      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/delete-document-cascade', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ doc_id: doc.id })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.text()
+        setError(`Failed to delete document: ${response.status} ${errorData}`)
+        return
+      }
+
+      // Remove the document from the local state
+      setDocs(docs.filter(d => d.id !== doc.id))
+      setShowDeleteConfirm(null)
+    } catch (err) {
+      setError('Failed to delete document')
+    }
+    
+    setDeletingId(null)
+  }
+
   return (
     <div className="p-4 w-full">
       <div className="max-w-4xl mx-auto w-full">
@@ -101,12 +141,47 @@ const DocumentVisibility: React.FC = () => {
                       <option key={v} value={v}>{v}</option>
                     ))}
                   </select>
+                  <button
+                    onClick={() => setShowDeleteConfirm({ doc })}
+                    disabled={deletingId === doc.id}
+                    className="rounded-md bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-red-400"
+                  >
+                    {deletingId === doc.id ? 'Deleting...' : 'Delete'}
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="w-80 rounded-lg bg-white p-6 shadow-lg">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Confirm Delete</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete "{nameForDoc(showDeleteConfirm.doc)}"? 
+              This action cannot be undone and will remove the document and all related data.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowDeleteConfirm(null)}
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(showDeleteConfirm.doc)}
+                disabled={deletingId === showDeleteConfirm.doc.id}
+                className="rounded-md bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:bg-red-400"
+              >
+                {deletingId === showDeleteConfirm.doc.id ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

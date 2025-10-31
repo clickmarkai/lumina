@@ -863,7 +863,7 @@ function App() {
         }, 100)
       }
     }
-  }, [currentSessionId, currentUser, loadMessagesForSession, newlyCreatedSessions])
+  }, [currentSessionId, currentUser])
 
   // Persist messages for current session
   useEffect(() => {

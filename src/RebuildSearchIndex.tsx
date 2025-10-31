@@ -22,7 +22,20 @@ const RebuildSearchIndex: React.FC = () => {
       })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const json = await response.json().catch(() => ({}))
-      setResult(json.message || 'Embedding job started. You can continue using the app while we rebuild the search index.')
+      
+      // Log the full response for debugging
+      console.log('🔍 Full n8n response:', json)
+      
+      // Display more detailed information if available
+      let resultMessage = json.message || 'Embedding job started. You can continue using the app while we rebuild the search index.'
+      
+      // Add additional details if available
+      if (json.status) resultMessage += `\nStatus: ${json.status}`
+      if (json.jobId) resultMessage += `\nJob ID: ${json.jobId}`
+      if (json.documentsProcessed) resultMessage += `\nDocuments to process: ${json.documentsProcessed}`
+      if (json.estimatedTime) resultMessage += `\nEstimated time: ${json.estimatedTime}`
+      
+      setResult(resultMessage)
     } catch (e: any) {
       setError(e?.message || 'Failed to start the job. Please try again.')
     } finally {
