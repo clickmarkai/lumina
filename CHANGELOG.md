@@ -1,9 +1,11 @@
 # Change Log
-## [0.0.9] LUMINA 2025-01-15
+## [0.0.9] LUMINA 2025-11-10
 ### Updates
 - Document Visibility: Added delete button to remove documents and all related data
+- Feedback List: Added feedback list page
+- Berita Hari Ini: added image metadata from enclosure property in RSS
 
-## [0.0.8] LUMINA 2025-01-15
+## [0.0.8] LUMINA 2025-10-23
 ### Updates
 - Berita Hari Ini now collapsible
 - Create chat sessions, load messages

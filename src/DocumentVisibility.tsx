@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { supabase } from './lib/supabaseClient'
 
 type Visibility = 'public' | 'user' | 'admin'
@@ -20,22 +20,34 @@ const DocumentVisibility: React.FC = () => {
   const [updatingId, setUpdatingId] = useState<string | number | null>(null)
   const [deletingId, setDeletingId] = useState<string | number | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<{ doc: DocumentRow } | null>(null)
+  const isFetchingDocsRef = useRef(false)
 
   useEffect(() => {
     const fetchDocs = async () => {
+      // Prevent duplicate fetches
+      if (isFetchingDocsRef.current) return
+      isFetchingDocsRef.current = true
+
       setLoading(true)
       setError(null)
-      const { data, error } = await supabase
-        .from('documents')
-        .select('id, title, visibility, lang, source, checksum, created_at')
-        .order('created_at', { ascending: false })
+      
+      try {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('id, title, visibility, lang, source, checksum, created_at')
+          .order('created_at', { ascending: false })
 
-      if (error) {
-        setError(error.message)
-      } else {
-        setDocs(data || [])
+        if (error) {
+          setError(error.message)
+        } else {
+          setDocs(data || [])
+        }
+      } catch (err: any) {
+        setError(err?.message || 'Failed to load documents')
+      } finally {
+        setLoading(false)
+        isFetchingDocsRef.current = false
       }
-      setLoading(false)
     }
     fetchDocs()
   }, [])
