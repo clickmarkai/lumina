@@ -7,6 +7,7 @@ import UploadPage from './UploadPage'
 import InviteAdmins from './InviteAdmins'
 import SetPasswordPage from './SetPasswordPage'
 import RebuildSearchIndex from './RebuildSearchIndex'
+import FeedbackList from './FeedbackList'
 import { supabase } from './lib/supabaseClient'
 import pkg from '../package.json'
 import type { User } from '@supabase/supabase-js'
@@ -764,6 +765,28 @@ function App() {
     }
   }, [currentUser, hasLoadedSessions, sessions.length, currentSessionId, saveSessionToWebhook, normalizeSession])
 
+  // Track previous user state to detect logout transitions
+  const prevUserRef = useRef<User | null>(null)
+  
+  // Clear messages when user logs out (transition from logged in to logged out)
+  useEffect(() => {
+    // Only clear if transitioning from logged in to logged out
+    if (prevUserRef.current && !currentUser && messages.length > 1) {
+      // User has logged out, clear all messages except welcome message
+      setMessages([
+        {
+          id: 'welcome_message',
+          content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+          role: 'assistant',
+          timestamp: new Date()
+        }
+      ])
+      setLastUserMessageId(null)
+    }
+    // Update ref to track current user state
+    prevUserRef.current = currentUser
+  }, [currentUser, messages.length])
+
   // Load messages for current session
   useEffect(() => {
     if (currentSessionId && currentUser) {
@@ -863,7 +886,7 @@ function App() {
         }, 100)
       }
     }
-  }, [currentSessionId, currentUser, loadMessagesForSession, newlyCreatedSessions])
+  }, [currentSessionId, currentUser])
 
   // Persist messages for current session
   useEffect(() => {
@@ -970,7 +993,7 @@ function App() {
   const [isSwitchingSession, setIsSwitchingSession] = useState(false)
   const [attachedFiles, setAttachedFiles] = useState<File[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility' | 'invite' | 'rebuild' | 'set-password'>('chat')
+  const [currentPage, setCurrentPage] = useState<'chat' | 'upload' | 'visibility' | 'invite' | 'rebuild' | 'feedback' | 'set-password'>('chat')
   const [navCollapsed, setNavCollapsed] = useState(true)
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false)
   const [isCreatingSession, setIsCreatingSession] = useState(false)
@@ -982,6 +1005,7 @@ function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isFetchingNewsRef = useRef(false)
 
   // Roles / RBAC
   const roles = Array.isArray((currentUser as any)?.app_metadata?.roles)
@@ -1043,26 +1067,47 @@ function App() {
 
   // Fetch latest news from Supabase table news_articles
   const fetchNews = useCallback(async () => {
+    // Prevent duplicate fetches
+    if (isFetchingNewsRef.current) return
+    isFetchingNewsRef.current = true
+
     try {
       const { data, error } = await supabase
         .from('news_articles')
-        .select('id, url, headline, published_at, source')
+        .select('id, url, headline, published_at, source, enclosure')
         .order('published_at', { ascending: false })
         .limit(30)
       if (error) {
         console.warn('news_articles fetch error:', error.message)
+        isFetchingNewsRef.current = false
         return
       }
-      const mapped: NewsItem[] = (data as any[]).map((r: any) => ({
-        id: String(r.id),
-        title: r.headline || r.source || 'Untitled',
-        image: '/vite.svg',
-        readTime: formatNewsMeta(r.published_at, r.source),
-        url: r.url || undefined
-      }))
+      const mapped: NewsItem[] = (data as any[]).map((r: any) => {
+        // Parse enclosure JSON and check if it's an image
+        let imageUrl = '/vite.svg' // Default placeholder
+        if (r.enclosure) {
+          try {
+            const enclosure = typeof r.enclosure === 'string' ? JSON.parse(r.enclosure) : r.enclosure
+            if (enclosure?.type && enclosure.type.startsWith('image/') && enclosure.url) {
+              imageUrl = enclosure.url
+            }
+          } catch (e) {
+            console.warn('Failed to parse enclosure for news article:', r.id, e)
+          }
+        }
+        return {
+          id: String(r.id),
+          title: r.headline || r.source || 'Untitled',
+          image: imageUrl,
+          readTime: formatNewsMeta(r.published_at, r.source),
+          url: r.url || undefined
+        }
+      })
       setNewsItems(mapped)
     } catch (e: any) {
       console.warn('news_articles fetch failed:', e?.message || e)
+    } finally {
+      isFetchingNewsRef.current = false
     }
   }, [formatNewsMeta])
 
@@ -1127,6 +1172,7 @@ function App() {
           // Clear all user-specific data from sessionStorage
           clearUserData()
           
+          // Clear messages immediately - must happen before clearing sessionId
           setMessages([
             {
               id: 'welcome_message',
@@ -1135,6 +1181,7 @@ function App() {
               timestamp: new Date()
             }
           ])
+          setLastUserMessageId(null)
           // Clear sessions and current session on logout
           setSessions([])
           setCurrentSessionId(null)
@@ -1166,7 +1213,7 @@ function App() {
     // Clear all user-specific data from sessionStorage
     clearUserData()
     
-    // Clear chat messages to default greeting
+    // Clear chat messages to default greeting - must happen before clearing sessionId
     setMessages([
       {
         id: 'welcome_message',
@@ -1175,13 +1222,14 @@ function App() {
         timestamp: new Date()
       }
     ])
-      // Clear sessions and current session on manual sign out
-      setSessions([])
-      setCurrentSessionId(null)
-      setHasLoadedSessions(false)
-      setIsLoadingSessions(false)
-      setLoadedSessionsFromServer(new Set())
-      setCorrectionMode(false)
+    setLastUserMessageId(null)
+    // Clear sessions and current session on manual sign out
+    setSessions([])
+    setCurrentSessionId(null)
+    setHasLoadedSessions(false)
+    setIsLoadingSessions(false)
+    setLoadedSessionsFromServer(new Set())
+    setCorrectionMode(false)
     } catch (error) {
       console.warn('Error signing out:', error)
     } finally {
@@ -1822,10 +1870,9 @@ function App() {
     setAttachedFiles([])
     if (fileInputRef.current) fileInputRef.current.value = ''
     setIsLoading(true)
-    // Add current session to loading sessions
-    if (currentSessionId) {
-      setLoadingSessions(prev => new Set(prev).add(currentSessionId))
-    }
+    // Add current session to loading sessions (use empty string for logged-out users)
+    const sessionKey = currentSessionId || ''
+    setLoadingSessions(prev => new Set(prev).add(sessionKey))
 
     try {
       // Prepare auth token for server-side verification in n8n
@@ -1982,14 +2029,13 @@ function App() {
       setMessages(prev => [...prev, errorMessage])
     } finally {
       setIsLoading(false)
-      // Remove current session from loading sessions
-      if (currentSessionId) {
-        setLoadingSessions(prev => {
-          const newSet = new Set(prev)
-          newSet.delete(currentSessionId)
-          return newSet
-        })
-      }
+      // Remove current session from loading sessions (use empty string for logged-out users)
+      const sessionKey = currentSessionId || ''
+      setLoadingSessions(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(sessionKey)
+        return newSet
+      })
     }
   }
 
@@ -2142,6 +2188,17 @@ function App() {
                         <span>Rebuild Search Index</span>
                       </button>
                     )}
+
+                    {hasAdmin && (
+                      <button 
+                        onClick={() => { setCurrentPage('feedback'); setMobileNavOpen(false) }} 
+                        aria-current={currentPage === 'feedback' ? 'page' : undefined}
+                        className={`${currentPage === 'feedback' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
+                        <span>Feedback List</span>
+                      </button>
+                    )}
                   </nav>
                   <div className="border-t border-gray-200 pt-2 mt-2">
                     {currentUser ? (
@@ -2280,6 +2337,17 @@ function App() {
                     >
                       <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.5 12a7.5 7.5 0 0112.75-5.06M19.5 12a7.5 7.5 0 01-12.75 5.06M16.5 3V7.5H21M7.5 21H3V16.5"/></svg>
                       <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Rebuild Search Index</span>
+                           </button>
+                  )}
+                  {hasAdmin && (
+                    <button
+                      onClick={() => setCurrentPage('feedback')}
+                      aria-current={currentPage === 'feedback' ? 'page' : undefined}
+                      className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'feedback' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
+                      title="Feedback List"
+                    >
+                      <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/></svg>
+                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Feedback List</span>
                            </button>
                   )}
                   
@@ -2669,6 +2737,17 @@ function App() {
                 hasAdmin ? (
                   <div className="flex-1 overflow-y-auto w-full p-4">
                     <RebuildSearchIndex />
+                  </div>
+                ) : (
+                  <div className="flex-1 p-6 w-full flex items-center justify-center">
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                  </div>
+                )
+              )}
+              {currentPage !== 'chat' && currentPage === 'feedback' && (
+                hasAdmin ? (
+                  <div className="flex-1 overflow-y-auto w-full p-4">
+                    <FeedbackList />
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
