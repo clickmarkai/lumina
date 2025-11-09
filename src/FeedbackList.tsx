@@ -21,7 +21,7 @@ const FeedbackList: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
   const [pageInfo, setPageInfo] = useState<PageInfo | null>(null)
-  const [limit, setLimit] = useState<number>(20)
+  const limit = 20 // Fixed limit of 20 items per page
   const [offset, setOffset] = useState<number>(0)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<FeedbackItem | null>(null)
@@ -117,7 +117,7 @@ const FeedbackList: React.FC = () => {
 
   useEffect(() => {
     fetchFeedbacks(limit, offset)
-  }, [limit, offset])
+  }, [offset]) // limit is a constant, no need to include in dependencies
 
   const handlePrevious = () => {
     if (offset > 0) {
