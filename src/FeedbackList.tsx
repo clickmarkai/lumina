@@ -1,13 +1,20 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from './lib/supabaseClient'
 
+type Visibility = 'public' | 'user' | 'admin'
+
 type FeedbackItem = {
   id: number
   content: string
   correction: string
   created_by: string
   created_at: string
+  visibility?: Visibility | null
+  updated_at?: string | null
+  updated_by?: string | null
 }
+
+const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin']
 
 type PageInfo = {
   limit: number
@@ -24,6 +31,7 @@ const FeedbackList: React.FC = () => {
   const limit = 20 // Fixed limit of 20 items per page
   const [offset, setOffset] = useState<number>(0)
   const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [updatingId, setUpdatingId] = useState<number | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<FeedbackItem | null>(null)
   const [expandedContent, setExpandedContent] = useState<Set<number>>(new Set())
   const [expandedCorrection, setExpandedCorrection] = useState<Set<number>>(new Set())
@@ -84,7 +92,15 @@ const FeedbackList: React.FC = () => {
         offset: currentOffset
       }
 
-      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/feedback-action', {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_FEEDBACK_ACTION || 'feedback-action'
+      if (!supabaseUrl) {
+        setError('Configuration error: Supabase URL is not set')
+        setLoading(false)
+        isFetchingRef.current = false
+        return
+      }
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -143,7 +159,14 @@ const FeedbackList: React.FC = () => {
         throw new Error('You must be signed in to delete feedbacks.')
       }
 
-      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/feedback-action', {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_FEEDBACK_ACTION || 'feedback-action'
+      if (!supabaseUrl) {
+        setError('Configuration error: Supabase URL is not set')
+        setDeletingId(null)
+        return
+      }
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -169,7 +192,8 @@ const FeedbackList: React.FC = () => {
     }
   }
 
-  const formatTimestamp = (timestamp: string) => {
+  const formatTimestamp = (timestamp: string | null | undefined): string => {
+    if (!timestamp) return 'N/A'
     try {
       const date = new Date(timestamp)
       return date.toLocaleString('en-US', {
@@ -177,11 +201,71 @@ const FeedbackList: React.FC = () => {
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
+        minute: '2-digit'
       })
     } catch {
-      return timestamp
+      return 'Invalid date'
+    }
+  }
+
+  const handleChange = async (feedback: FeedbackItem, next: Visibility) => {
+    setError(null)
+    setUpdatingId(feedback.id)
+    const previous = feedbacks
+    
+    // Get current user's email for updated_by
+    const { data: { user } } = await supabase.auth.getUser()
+    const adminEmail = user?.email || null
+    
+    const now = new Date().toISOString()
+    
+    // Optimistic update
+    setFeedbacks(feedbacks.map(f => (f.id === feedback.id ? { ...f, visibility: next, updated_at: now, updated_by: adminEmail } : f)))
+    
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+      if (!accessToken) {
+        throw new Error('You must be signed in to update feedback visibility.')
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_FEEDBACK_ACTION || 'feedback-action'
+      if (!supabaseUrl) {
+        setError('Configuration error: Supabase URL is not set')
+        setFeedbacks(previous)
+        setUpdatingId(null)
+        return
+      }
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ 
+          action: 'update', 
+          feedback_id: feedback.id,
+          visibility: next,
+          updated_at: now,
+          updated_by: adminEmail
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(`Failed to update feedback: ${response.status} ${errorData}`)
+      }
+
+      // Refetch the current page after successful update to get the latest data
+      lastFetchParamsRef.current = null
+      await fetchFeedbacks(limit, offset)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update feedback visibility')
+      setFeedbacks(previous)
+    } finally {
+      setUpdatingId(null)
     }
   }
 
@@ -233,9 +317,9 @@ const FeedbackList: React.FC = () => {
 
                 return (
                   <div key={feedback.id} className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-                    {/* Header with metadata and delete */}
+                    {/* Header with metadata, visibility dropdown, and delete */}
                     <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between gap-4">
-                      <div className="flex-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+                      <div className="flex-1 flex flex-col gap-1 text-xs text-gray-600">
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-gray-500">By:</span>
                           <span className="truncate max-w-[200px] lg:max-w-none" title={feedback.created_by || 'N/A'}>
@@ -244,27 +328,52 @@ const FeedbackList: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="font-semibold text-gray-500">At:</span>
-                          <span>{feedback.created_at ? formatTimestamp(feedback.created_at) : 'N/A'}</span>
+                          <span>{formatTimestamp(feedback.created_at)}</span>
                         </div>
-                      </div>
-                      <button
-                        onClick={() => setShowDeleteConfirm(feedback)}
-                        disabled={deletingId === feedback.id}
-                        className="flex-shrink-0 p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Delete"
-                        aria-label="Delete feedback"
-                      >
-                        {deletingId === feedback.id ? (
-                          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                        ) : (
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
+                        {feedback.updated_by && feedback.updated_at && (
+                          <>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-gray-500">Updated by:</span>
+                              <span>{feedback.updated_by}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-gray-500">Updated at:</span>
+                              <span>{formatTimestamp(feedback.updated_at)}</span>
+                            </div>
+                          </>
                         )}
-                      </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs text-gray-600">Visibility</label>
+                        <select
+                          value={(feedback.visibility as Visibility) || 'public'}
+                          onChange={(e) => handleChange(feedback, e.target.value as Visibility)}
+                          disabled={updatingId === feedback.id}
+                          className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {VISIBILITY_OPTIONS.map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => setShowDeleteConfirm(feedback)}
+                          disabled={deletingId === feedback.id}
+                          className="flex-shrink-0 p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete"
+                          aria-label="Delete feedback"
+                        >
+                          {deletingId === feedback.id ? (
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                     </div>
 
                     {/* Content Section */}

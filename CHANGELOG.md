@@ -1,4 +1,10 @@
 # Change Log
+## [0.0.10] LUMINA 2025-11-10
+### Updates
+- added product documents section in upload documents page
+- added env file to easily switch between env variables
+- added visibility setting for feedback entries
+
 ## [0.0.9] LUMINA 2025-11-10
 ### Updates
 - Document Visibility: Added delete button to remove documents and all related data
