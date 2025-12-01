@@ -9,6 +9,8 @@ type DocumentRow = {
   title?: string | null
   filename?: string | null
   created_at?: string | null
+  updated_at?: string | null
+  updated_by?: string | null
 }
 
 const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin']
@@ -34,7 +36,7 @@ const DocumentVisibility: React.FC = () => {
       try {
         const { data, error } = await supabase
           .from('documents')
-          .select('id, title, visibility, lang, source, checksum, created_at')
+          .select('id, title, visibility, lang, source, checksum, created_at, updated_at, updated_by')
           .order('created_at', { ascending: false })
 
         if (error) {
@@ -60,15 +62,46 @@ const DocumentVisibility: React.FC = () => {
     }
   }, [])
 
+  const formatTimestamp = (timestamp: string | null | undefined): string => {
+    if (!timestamp) return 'N/A'
+    try {
+      const date = new Date(timestamp)
+      return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    } catch {
+      return 'Invalid date'
+    }
+  }
+
   const handleChange = async (doc: DocumentRow, next: Visibility) => {
     setError(null)
     setUpdatingId(doc.id)
     const previous = docs
+    
+    // Get current user's email for updated_by
+    const { data: { user } } = await supabase.auth.getUser()
+    const adminEmail = user?.email || null
+    
+    const now = new Date().toISOString()
+    
     // optimistic update
-    setDocs(docs.map(d => (d.id === doc.id ? { ...d, visibility: next } : d)))
+    setDocs(docs.map(d => (d.id === doc.id ? { ...d, visibility: next, updated_at: now, updated_by: adminEmail } : d)))
+    
+    // Update visibility, updated_at, and updated_by
+    const updateData: { visibility: Visibility; updated_at?: string; updated_by?: string | null } = {
+      visibility: next,
+      updated_at: now,
+      updated_by: adminEmail
+    }
+    
     const { error } = await supabase
       .from('documents')
-      .update({ visibility: next })
+      .update(updateData)
       .eq('id', doc.id)
     if (error) {
       setError(error.message)
@@ -90,7 +123,14 @@ const DocumentVisibility: React.FC = () => {
         return
       }
 
-      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/delete-document-cascade', {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_DELETE_DOCUMENT_CASCADE || 'delete-document-cascade'
+      if (!supabaseUrl) {
+        setError('Configuration error: Supabase URL is not set')
+        setDeletingId(null)
+        return
+      }
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -137,9 +177,13 @@ const DocumentVisibility: React.FC = () => {
           <div className="space-y-2">
             {docs.map((doc) => (
               <div key={doc.id} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
-                <div className="min-w-0 pr-3">
+                <div className="min-w-0 pr-3 flex-1">
                   <div className="truncate text-sm font-medium text-gray-900">{nameForDoc(doc)}</div>
-                  <div className="text-xs text-gray-500">ID: {String(doc.id)}</div>
+                  {doc.updated_by && doc.updated_at && (
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      Updated by {doc.updated_by} at {formatTimestamp(doc.updated_at)}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-xs text-gray-600">Visibility</label>

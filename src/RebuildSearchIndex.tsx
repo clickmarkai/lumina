@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 
-const WEBHOOK_URL = 'https://primary-production-b7ed9.up.railway.app/webhook/50616f08-196d-4957-b125-c689af579281'
+const WEBHOOK_URL = import.meta.env.VITE_N8N_WEBHOOK_REBUILD_SEARCH_INDEX
 
 const RebuildSearchIndex: React.FC = () => {
   const [running, setRunning] = useState(false)
@@ -9,6 +9,10 @@ const RebuildSearchIndex: React.FC = () => {
 
   const trigger = async () => {
     if (running) return
+    if (!WEBHOOK_URL) {
+      setError('Configuration error: VITE_N8N_WEBHOOK_REBUILD_SEARCH_INDEX is not set')
+      return
+    }
     setRunning(true)
     setResult(null)
     setError(null)

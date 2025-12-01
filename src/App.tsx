@@ -578,7 +578,13 @@ function App() {
         payload.title = sessionTitle
       }
 
-      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/chat-session', {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_CHAT_SESSION || 'chat-session'
+      if (!supabaseUrl) {
+        console.error('Configuration error: VITE_SUPABASE_URL is not set')
+        throw new Error('Configuration error: Supabase URL is not set')
+      }
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -657,7 +663,13 @@ function App() {
       const { data: authData } = await supabase.auth.getSession()
       const accessToken = authData.session?.access_token
 
-      const response = await fetch('https://yzflpnovjxmovgngcevr.supabase.co/functions/v1/messages-action', {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_MESSAGES_ACTION || 'messages-action'
+      if (!supabaseUrl) {
+        console.error('Configuration error: VITE_SUPABASE_URL is not set')
+        return
+      }
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -809,6 +821,7 @@ function App() {
           if (serverMessages && serverMessages.length > 0) {
             setMessages(serverMessages)
             setLoadedSessionsFromServer(prev => new Set(prev).add(currentSessionId))
+            currentMessagesSessionRef.current = currentSessionId
             
             // Extract lastUserMessageId from the loaded messages
             const userMessages = serverMessages.filter(msg => msg.role === 'user')
@@ -861,9 +874,21 @@ function App() {
           setIsSwitchingSession(false)
         })
       } else {
-        // Already loaded from server, use local storage
+        // Already loaded from server - check if messages for this session are already loaded
+        // Use ref to track which session the current messages belong to (avoids stale closure issues)
+        if (currentMessagesSessionRef.current === currentSessionId) {
+          // Messages for this session are already loaded - don't reload
+          console.log('⏭️ Skipping reload - messages already loaded for session:', currentSessionId)
+          setIsLoadingSession(false)
+          setIsSwitchingSession(false)
+          return
+        }
+        
+        // Messages not loaded for this session, restore from sessionStorage
+        console.log('📦 Restoring messages from sessionStorage for session:', currentSessionId)
         const sessionMessages = loadMessagesForSession(currentSessionId, currentUser.id)
         setMessages(sessionMessages as Message[])
+        currentMessagesSessionRef.current = currentSessionId
         
         // Extract lastUserMessageId from the local messages
         const userMessages = sessionMessages.filter(msg => msg.role === 'user')
@@ -1006,6 +1031,7 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isFetchingNewsRef = useRef(false)
+  const currentMessagesSessionRef = useRef<string | null>(null)
 
   // Roles / RBAC
   const roles = Array.isArray((currentUser as any)?.app_metadata?.roles)
@@ -1016,6 +1042,7 @@ function App() {
   const handleSwitchSession = useCallback((sessionId: string) => {
     if (!currentUser) return
     setIsSwitchingSession(true)
+    currentMessagesSessionRef.current = null // Reset ref when switching sessions
     setCurrentSessionId(sessionId)
     // The useEffect will handle loading messages when currentSessionId changes
     // The switching animation will be stopped by the message loading useEffect
@@ -1161,14 +1188,48 @@ function App() {
       if (mounted) setCurrentUser(data.user ?? null)
     })
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      setCurrentUser(session?.user ?? null)
+      const previousUser = currentUser
+      const newUser = session?.user ?? null
+      setCurrentUser(newUser)
+      
       // Reset userId on login/logout
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
         const newId = createNewUserId()
         setUserId(newId)
         localStorage.setItem('lumina_user_id', newId)
-        // Only clear messages on explicit sign-out; keep history on sign-in
-        if (event === 'SIGNED_OUT') {
+        
+        if (event === 'SIGNED_IN') {
+          // Only clear messages if this is an actual sign-in transition (logged out -> logged in)
+          // Don't clear if user was already logged in (e.g., when switching tabs triggers auth refresh)
+          const isActualSignIn = !previousUser && newUser
+          
+          if (isActualSignIn) {
+            // IMPORTANT: Clear messages FIRST, before any other state changes
+            // This prevents race conditions where messages might be loaded before the clear
+            setMessages([
+              {
+                id: 'welcome_message',
+                content: 'HAI ... apa yang bisa saya bantu untuk membuat harimu lebih cerah ?',
+                role: 'assistant',
+                timestamp: new Date()
+              }
+            ])
+            setLastUserMessageId(null)
+            
+            // Clear all user-specific data from sessionStorage to prevent loading logged-out messages
+            clearUserData()
+            
+            // Clear all session-related state so it can be reloaded fresh for the logged-in user
+            setCurrentSessionId(null)
+            setSessions([])
+            setHasLoadedSessions(false)
+            setIsLoadingSessions(false)
+            setLoadedSessionsFromServer(new Set())
+            currentMessagesSessionRef.current = null
+            setNewlyCreatedSessions(new Set())
+          }
+          // If user was already logged in, don't clear messages - just update the user state
+        } else if (event === 'SIGNED_OUT') {
           // Clear all user-specific data from sessionStorage
           clearUserData()
           
@@ -1188,6 +1249,7 @@ function App() {
           setHasLoadedSessions(false)
           setIsLoadingSessions(false)
           setLoadedSessionsFromServer(new Set())
+          currentMessagesSessionRef.current = null
           setCorrectionMode(false)
         }
       }
@@ -1229,6 +1291,7 @@ function App() {
     setHasLoadedSessions(false)
     setIsLoadingSessions(false)
     setLoadedSessionsFromServer(new Set())
+    currentMessagesSessionRef.current = null
     setCorrectionMode(false)
     } catch (error) {
       console.warn('Error signing out:', error)
@@ -1900,7 +1963,11 @@ function App() {
         form.append('correction_mode', correctionMode.toString())
         if (!lastUserMessageId) form.append('generateSessionName', 'true')
         for (const f of filesToSend) form.append('files', f, f.name)
-        response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
+        const chatWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_CHAT
+        if (!chatWebhookUrl) {
+          throw new Error('Configuration error: VITE_N8N_WEBHOOK_CHAT is not set')
+        }
+        response = await fetch(chatWebhookUrl, {
           method: 'POST',
           body: form
         })
@@ -1913,7 +1980,11 @@ function App() {
            correctionMode
          })
          
-         response = await fetch('https://primary-production-b7ed9.up.railway.app/webhook/92ed93f0-e638-484d-bf1d-eb1a4c7d66e6/chat', {
+         const chatWebhookUrl = import.meta.env.VITE_N8N_WEBHOOK_CHAT
+         if (!chatWebhookUrl) {
+           throw new Error('Configuration error: VITE_N8N_WEBHOOK_CHAT is not set')
+         }
+         response = await fetch(chatWebhookUrl, {
          method: 'POST',
          headers: {
            'Content-Type': 'application/json'
