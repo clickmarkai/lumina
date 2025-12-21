@@ -36,6 +36,74 @@ interface NewsItem {
   url?: string
 }
 
+// Link component with loading state for webhook downloads
+const MarkdownLink = React.memo(({ children, href }: { children: any; href?: string }) => {
+  const [isLoading, setIsLoading] = useState(false)
+  
+  const isWebhookLink = href && typeof href === 'string' && href.includes('/webhook/')
+  
+  const handleClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (isWebhookLink && href) {
+      e.preventDefault()
+      setIsLoading(true)
+      try {
+        const response = await fetch(href)
+        if (!response.ok) {
+          throw new Error(`Failed to download: ${response.status}`)
+        }
+        
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'Recommended Products.xlsx'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(url)
+      } catch (error) {
+        console.error('Error downloading file:', error)
+        // Fallback to opening in new tab if download fails
+        window.open(href, '_blank', 'noopener,noreferrer')
+      } finally {
+        setIsLoading(false)
+      }
+    }
+  }
+  
+  if (isWebhookLink) {
+    return (
+      <a 
+        href={href} 
+        onClick={handleClick}
+        className="text-blue-600 hover:text-blue-800 underline font-medium break-all overflow-hidden inline-block max-w-full cursor-pointer relative"
+        style={{ pointerEvents: isLoading ? 'none' : 'auto' }}
+      >
+        {children}
+        {isLoading && (
+          <span className="inline-block ml-2">
+            <svg className="animate-spin h-3 w-3 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </span>
+        )}
+      </a>
+    )
+  }
+  
+  return (
+    <a 
+      href={href} 
+      className="text-blue-600 hover:text-blue-800 underline font-medium break-all overflow-hidden inline-block max-w-full" 
+      target="_blank" 
+      rel="noopener noreferrer"
+    >
+      {children}
+    </a>
+  )
+})
+
 // Memoized markdown renderer component
 const MarkdownRenderer = React.memo(({ content, preprocessMarkdown, ExcelDownload }: { 
   content: string; 
@@ -53,11 +121,11 @@ const MarkdownRenderer = React.memo(({ content, preprocessMarkdown, ExcelDownloa
     p: ({children}: any) => <p className="text-gray-800 text-sm mb-3 last:mb-0 leading-relaxed break-words hyphens-auto overflow-hidden">{children}</p>,
     code: ({children}: any) => <code className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-mono break-all overflow-hidden inline-block max-w-full">{children}</code>,
     pre: ({children}: any) => <pre className="bg-gray-100 text-gray-800 p-3 rounded-md my-3 text-xs font-mono border border-gray-200 break-all overflow-x-hidden max-w-full">{children}</pre>,
-    ul: ({children}: any) => <ul className="list-disc text-gray-700 mb-3 ml-5 space-y-1 overflow-hidden">{children}</ul>,
-    ol: ({children}: any) => <ol className="list-decimal text-gray-700 mb-3 ml-5 space-y-1 overflow-hidden">{children}</ol>,
-    li: ({children}: any) => <li className="text-gray-700 text-sm leading-relaxed break-words hyphens-auto overflow-hidden">{children}</li>,
+    ul: ({children}: any) => <ul className="list-disc list-outside text-gray-700 mb-3 ml-5 space-y-1">{children}</ul>,
+    ol: ({children}: any) => <ol className="list-decimal list-outside text-gray-700 mb-3 ml-5 space-y-1">{children}</ol>,
+    li: ({children}: any) => <li className="text-gray-700 text-sm leading-relaxed break-words hyphens-auto">{children}</li>,
     blockquote: ({children}: any) => <blockquote className="border-l-4 border-blue-400 pl-3 my-3 text-gray-600 italic bg-blue-50 py-2 rounded-r text-sm break-words hyphens-auto overflow-hidden">{children}</blockquote>,
-    a: ({children, href}: any) => <a href={href} className="text-blue-600 hover:text-blue-800 underline font-medium break-all overflow-hidden inline-block max-w-full" target="_blank" rel="noopener noreferrer">{children}</a>,
+    a: ({children, href}: any) => <MarkdownLink href={href}>{children}</MarkdownLink>,
     img: ({src, alt}: any) => <MarkdownImage src={src} alt={alt} />,
     strong: ({children}: any) => <strong className="font-bold text-gray-900 break-words hyphens-auto">{children}</strong>,
     em: ({children}: any) => <em className="italic text-gray-700 break-words hyphens-auto">{children}</em>,
@@ -530,6 +598,12 @@ function App() {
     }
   }, [])
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  // Use ref to track current user for auth state change callback to avoid stale closures
+  const currentUserRef = useRef(currentUser)
+  
+  useEffect(() => {
+    currentUserRef.current = currentUser
+  }, [currentUser])
 
   const scrollToBottom = useCallback((force = false) => {
     if (messagesEndRef.current) {
@@ -1037,7 +1111,7 @@ function App() {
   const roles = Array.isArray((currentUser as any)?.app_metadata?.roles)
     ? ((currentUser as any).app_metadata.roles as string[])
     : []
-  const hasAdmin = roles.includes('admin')
+  const hasAdmin = roles.includes('superadmin')
 
   const handleSwitchSession = useCallback((sessionId: string) => {
     if (!currentUser) return
@@ -1188,7 +1262,7 @@ function App() {
       if (mounted) setCurrentUser(data.user ?? null)
     })
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      const previousUser = currentUser
+      const previousUser = currentUserRef.current
       const newUser = session?.user ?? null
       setCurrentUser(newUser)
       
@@ -2245,7 +2319,7 @@ function App() {
                         className={`${currentPage === 'invite' ? 'bg-gray-100 text-gray-900' : 'text-gray-700 hover:bg-gray-50'} flex items-center gap-3 w-full px-2 py-2 rounded-md`}
                       >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
-                        <span>Invite Admins</span>
+                        <span>Invite Users</span>
                       </button>
                     )}
 
@@ -2393,10 +2467,10 @@ function App() {
                       onClick={() => setCurrentPage('invite')}
                       aria-current={currentPage === 'invite' ? 'page' : undefined}
                       className={`flex items-center w-full h-10 ${navCollapsed ? 'px-2 py-2' : 'p-2'} rounded-md gap-3 ${currentPage === 'invite' ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'}`}
-                      title="Invite Admins"
+                      title="Invite Users"
                     >
                       <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 8a6 6 0 11-12 0 6 6 0 0112 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4zM15 10h4m-2-2v4"/></svg>
-                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Invite Admins</span>
+                      <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Invite Users</span>
                            </button>
                   )}
                   {hasAdmin && (
@@ -2775,7 +2849,7 @@ function App() {
               </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
             </div>
                 )
               )}
@@ -2789,7 +2863,7 @@ function App() {
           </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
                   </div>
                 )
               )}
@@ -2800,7 +2874,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
                   </div>
                 )
               )}
@@ -2811,7 +2885,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
                   </div>
                 )
               )}
@@ -2822,7 +2896,7 @@ function App() {
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin account.</div>
+                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
                   </div>
                 )
               )}

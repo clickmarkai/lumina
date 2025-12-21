@@ -1,4 +1,12 @@
 # Change Log
+## [0.0.11] LUMINA 2025-12-09
+### Updates
+- Rebuild Search Index: Added section to trigger embedding generation for 'products' bucket.
+- Chat: Fixed issue where chat messages would clear on tab switch or focus change.
+- Chat: Fixed rendering of bullet and number points in AI response bubbles.
+- add superadmin visibility
+- Download file for recommended products (.xlsx)
+
 ## [0.0.10] LUMINA 2025-11-10
 ### Updates
 - added product documents section in upload documents page

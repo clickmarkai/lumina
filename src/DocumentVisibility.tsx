@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 import { supabase } from './lib/supabaseClient'
 
-type Visibility = 'public' | 'user' | 'admin'
+type Visibility = 'public' | 'user' | 'admin' | 'superadmin'
 
 type DocumentRow = {
   id: string | number
@@ -13,7 +13,7 @@ type DocumentRow = {
   updated_by?: string | null
 }
 
-const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin']
+const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin', 'superadmin']
 
 const DocumentVisibility: React.FC = () => {
   const [docs, setDocs] = useState<DocumentRow[]>([])
@@ -142,17 +142,18 @@ const DocumentVisibility: React.FC = () => {
       if (!response.ok) {
         const errorData = await response.text()
         setError(`Failed to delete document: ${response.status} ${errorData}`)
+        setDeletingId(null)
         return
       }
 
       // Remove the document from the local state
       setDocs(docs.filter(d => d.id !== doc.id))
       setShowDeleteConfirm(null)
+      setDeletingId(null)
     } catch (err) {
       setError('Failed to delete document')
+      setDeletingId(null)
     }
-    
-    setDeletingId(null)
   }
 
   return (
