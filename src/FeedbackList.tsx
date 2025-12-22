@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { supabase } from './lib/supabaseClient'
 
-type Visibility = 'public' | 'user' | 'admin'
+type Visibility = 'public' | 'user' | 'admin' | 'superadmin'
 
 type FeedbackItem = {
   id: number
@@ -14,7 +14,7 @@ type FeedbackItem = {
   updated_by?: string | null
 }
 
-const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin']
+const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin', 'superadmin']
 
 type PageInfo = {
   limit: number

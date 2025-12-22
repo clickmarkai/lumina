@@ -105,7 +105,7 @@ const UploadPage: React.FC = () => {
     return () => { mounted = false; sub.subscription.unsubscribe() }
   }, [])
 
-  const isAdmin = roles.includes('admin')
+  const isAdmin = roles.includes('superadmin')
 
   async function fetchObjects(bucket: string) {
     if (!authed || !isAdmin) return
@@ -179,7 +179,7 @@ const UploadPage: React.FC = () => {
         )}
         {authed && !isAdmin && (
           <div className="mb-4 text-sm text-red-800 bg-red-50 border border-red-200 rounded p-3">
-            You don't have permission to access this page. Ask an admin to grant the <span className="font-semibold">admin</span> role.
+            You don't have permission to access this page. Ask a superadmin to grant the <span className="font-semibold">superadmin</span> role.
           </div>
         )}
 
