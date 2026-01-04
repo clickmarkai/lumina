@@ -1,4 +1,8 @@
 # Change Log
+## [0.0.12] LUMINA 2025-12-09
+### Updates
+- Admins allowed to submit correction
+
 ## [0.0.11] LUMINA 2025-12-09
 ### Updates
 - Rebuild Search Index: Added section to trigger embedding generation for 'products' bucket.

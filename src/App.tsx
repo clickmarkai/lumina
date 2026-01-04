@@ -1112,6 +1112,7 @@ function App() {
     ? ((currentUser as any).app_metadata.roles as string[])
     : []
   const hasAdmin = roles.includes('superadmin')
+  const canAccessFeedback = roles.includes('admin') || roles.includes('superadmin')
 
   const handleSwitchSession = useCallback((sessionId: string) => {
     if (!currentUser) return
@@ -2334,7 +2335,7 @@ function App() {
                       </button>
                     )}
 
-                    {hasAdmin && (
+                    {canAccessFeedback && (
                       <button 
                         onClick={() => { setCurrentPage('feedback'); setMobileNavOpen(false) }} 
                         aria-current={currentPage === 'feedback' ? 'page' : undefined}
@@ -2484,7 +2485,7 @@ function App() {
                       <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Rebuild Search Index</span>
                            </button>
                   )}
-                  {hasAdmin && (
+                  {canAccessFeedback && (
                     <button
                       onClick={() => setCurrentPage('feedback')}
                       aria-current={currentPage === 'feedback' ? 'page' : undefined}
@@ -2890,13 +2891,13 @@ function App() {
                 )
               )}
               {currentPage !== 'chat' && currentPage === 'feedback' && (
-                hasAdmin ? (
+                canAccessFeedback ? (
                   <div className="flex-1 overflow-y-auto w-full p-4">
                     <FeedbackList />
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin or superadmin account.</div>
                   </div>
                 )
               )}
