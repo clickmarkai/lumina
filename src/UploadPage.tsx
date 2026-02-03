@@ -4,6 +4,10 @@ import { supabase } from './lib/supabaseClient'
 const BUCKET_DOCUMENTS = 'documents'
 const BUCKET_PRODUCTS = 'products'
 
+const WEBHOOK_UPLOAD_DOCUMENTS =
+  import.meta.env.VITE_N8N_WEBHOOK_UPLOAD_DOCUMENTS ||
+  'https://primary-dev-aba9.up.railway.app/webhook-test/ec4d1af0-6cb8-495b-8358-9d039fb731c7'
+
 const UploadPage: React.FC = () => {
   // Documents bucket state
   const [docFiles, setDocFiles] = useState<FileList | null>(null)
@@ -59,8 +63,23 @@ const UploadPage: React.FC = () => {
 
       const success = results.filter(r => r.path).length
       const failed = results.filter(r => r.error).length
-      const message = `Uploaded ${success} file(s). ${failed ? failed + ' failed.' : ''}`
-      
+      let message = `Uploaded ${success} file(s). ${failed ? failed + ' failed.' : ''}`
+
+      // Documents bucket: call webhook with successfully uploaded files
+      if (bucket === BUCKET_DOCUMENTS && success > 0 && WEBHOOK_UPLOAD_DOCUMENTS) {
+        const formData = new FormData()
+        const filesArray = Array.from(files)
+        results.forEach((r, i) => {
+          if (r.path && filesArray[i]) formData.append('files', filesArray[i])
+        })
+        try {
+          const res = await fetch(WEBHOOK_UPLOAD_DOCUMENTS, { method: 'POST', body: formData })
+          if (!res.ok) throw new Error(String(res.status))
+        } catch {
+          message += ' Post-processing webhook could not be reached.'
+        }
+      }
+
       if (bucket === BUCKET_DOCUMENTS) {
         setDocMessage(message)
         await fetchObjects(BUCKET_DOCUMENTS)
@@ -168,7 +187,7 @@ const UploadPage: React.FC = () => {
     <div className="p-4 w-full">
       <div className="max-w-4xl mx-auto w-full">
         <div className="mb-4">
-          <h1 className="text-lg font-semibold text-gray-900">Upload Files</h1>
+          <h1 className="text-lg font-semibold text-gray-900">Upload Documents</h1>
           <p className="text-sm text-gray-600">Upload files to storage buckets.</p>
         </div>
 

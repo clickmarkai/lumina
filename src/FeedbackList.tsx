@@ -194,22 +194,6 @@ const FeedbackList: React.FC = () => {
     }
   }
 
-  const formatTimestamp = (timestamp: string | null | undefined): string => {
-    if (!timestamp) return 'N/A'
-    try {
-      const date = new Date(timestamp)
-      return date.toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    } catch {
-      return 'Invalid date'
-    }
-  }
-
   const handleChange = async (feedback: FeedbackItem, next: Visibility) => {
     setError(null)
     setUpdatingId(feedback.id)

@@ -1,4 +1,8 @@
 # Change Log
+## [0.0.13] LUMINA 2025-12-09
+### Updates
+- Feedback List: Added approve/revoke button for each feedback entry
+
 ## [0.0.12] LUMINA 2025-12-09
 ### Updates
 - Admins allowed to submit correction

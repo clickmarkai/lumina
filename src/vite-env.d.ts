@@ -10,6 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_N8N_WEBHOOK_CHAT?: string
   readonly VITE_N8N_WEBHOOK_REBUILD_SEARCH_INDEX?: string
   readonly VITE_N8N_WEBHOOK_REBUILD_PRODUCT_INDEX?: string
+  readonly VITE_N8N_WEBHOOK_UPLOAD_DOCUMENTS?: string
 }
 
 interface ImportMeta {
