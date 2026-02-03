@@ -920,7 +920,10 @@ function App() {
             }
             
             // Force scroll to bottom after server messages are loaded
-            setTimeout(() => scrollToBottom(true), 150)
+            // Use requestAnimationFrame to ensure DOM is ready
+            requestAnimationFrame(() => {
+              setTimeout(() => scrollToBottom(true), 200)
+            })
           } else {
             // No messages from server, use default welcome message for new sessions
             setMessages([{
@@ -1112,6 +1115,7 @@ function App() {
     ? ((currentUser as any).app_metadata.roles as string[])
     : []
   const hasAdmin = roles.includes('superadmin')
+  const canAccessFeedback = roles.includes('admin') || roles.includes('superadmin')
 
   const handleSwitchSession = useCallback((sessionId: string) => {
     if (!currentUser) return
@@ -1223,17 +1227,38 @@ function App() {
   }, [newsSheetOpen, newsItems.length, fetchNews])
 
   useEffect(() => {
-    // Use a longer delay to ensure DOM has fully rendered, especially for large message loads
-    const timeoutId = setTimeout(() => {
-      scrollToBottom(true) // Force immediate scroll for message loading
-    }, 150)
+    // Use requestAnimationFrame to ensure DOM has fully rendered, especially for large message loads
+    // Then use a timeout to ensure scroll happens after all content is painted
+    const rafId = requestAnimationFrame(() => {
+      setTimeout(() => {
+        scrollToBottom(true) // Force immediate scroll for message loading
+      }, 200)
+    })
     
-    return () => clearTimeout(timeoutId)
+    return () => {
+      cancelAnimationFrame(rafId)
+    }
   }, [messages, scrollToBottom])
 
   useEffect(() => {
     scrollToBottom() // Smooth scroll for file attachments
   }, [attachedFiles, scrollToBottom])
+
+  // Scroll to bottom when switching to chat page or changing sessions
+  useEffect(() => {
+    if (currentPage === 'chat' && messages.length > 0 && !isSwitchingSession) {
+      // Use requestAnimationFrame to ensure DOM is ready
+      const rafId = requestAnimationFrame(() => {
+        setTimeout(() => {
+          scrollToBottom(true)
+        }, 200)
+      })
+      
+      return () => {
+        cancelAnimationFrame(rafId)
+      }
+    }
+  }, [currentPage, currentSessionId, scrollToBottom, isSwitchingSession, messages.length])
 
   // Hash-based route detection for password setup
   useEffect(() => {
@@ -2334,7 +2359,7 @@ function App() {
                       </button>
                     )}
 
-                    {hasAdmin && (
+                    {canAccessFeedback && (
                       <button 
                         onClick={() => { setCurrentPage('feedback'); setMobileNavOpen(false) }} 
                         aria-current={currentPage === 'feedback' ? 'page' : undefined}
@@ -2484,7 +2509,7 @@ function App() {
                       <span className={`${navCollapsed ? 'hidden' : ''} truncate`}>Rebuild Search Index</span>
                            </button>
                   )}
-                  {hasAdmin && (
+                  {canAccessFeedback && (
                     <button
                       onClick={() => setCurrentPage('feedback')}
                       aria-current={currentPage === 'feedback' ? 'page' : undefined}
@@ -2890,13 +2915,13 @@ function App() {
                 )
               )}
               {currentPage !== 'chat' && currentPage === 'feedback' && (
-                hasAdmin ? (
+                canAccessFeedback ? (
                   <div className="flex-1 overflow-y-auto w-full p-4">
                     <FeedbackList />
                   </div>
                 ) : (
                   <div className="flex-1 p-6 w-full flex items-center justify-center">
-                    <div className="text-sm text-gray-600">Superadmin only. Please sign in with a superadmin account.</div>
+                    <div className="text-sm text-gray-600">Admin only. Please sign in with an admin or superadmin account.</div>
                   </div>
                 )
               )}

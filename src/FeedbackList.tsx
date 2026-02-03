@@ -12,6 +12,7 @@ type FeedbackItem = {
   visibility?: Visibility | null
   updated_at?: string | null
   updated_by?: string | null
+  approved?: boolean | null
 }
 
 const VISIBILITY_OPTIONS: Visibility[] = ['public', 'user', 'admin', 'superadmin']
@@ -32,6 +33,7 @@ const FeedbackList: React.FC = () => {
   const [offset, setOffset] = useState<number>(0)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [updatingId, setUpdatingId] = useState<number | null>(null)
+  const [approvingId, setApprovingId] = useState<number | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<FeedbackItem | null>(null)
   const [expandedContent, setExpandedContent] = useState<Set<number>>(new Set())
   const [expandedCorrection, setExpandedCorrection] = useState<Set<number>>(new Set())
@@ -192,22 +194,6 @@ const FeedbackList: React.FC = () => {
     }
   }
 
-  const formatTimestamp = (timestamp: string | null | undefined): string => {
-    if (!timestamp) return 'N/A'
-    try {
-      const date = new Date(timestamp)
-      return date.toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
-    } catch {
-      return 'Invalid date'
-    }
-  }
-
   const handleChange = async (feedback: FeedbackItem, next: Visibility) => {
     setError(null)
     setUpdatingId(feedback.id)
@@ -269,6 +255,68 @@ const FeedbackList: React.FC = () => {
     }
   }
 
+  const handleApprove = async (feedback: FeedbackItem) => {
+    setError(null)
+    setApprovingId(feedback.id)
+    const previous = feedbacks
+    
+    // Determine the new approved value: if currently approved, set to false (revoke), otherwise set to true
+    const newApprovedValue = feedback.approved === true ? false : true
+    
+    // Optimistic update
+    setFeedbacks(feedbacks.map(f => (f.id === feedback.id ? { ...f, approved: newApprovedValue } : f)))
+    
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const accessToken = sessionData.session?.access_token
+      if (!accessToken) {
+        throw new Error('You must be signed in to approve feedback.')
+      }
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const functionName = import.meta.env.VITE_SUPABASE_FUNCTION_FEEDBACK_ACTION || 'feedback-action'
+      if (!supabaseUrl) {
+        setError('Configuration error: Supabase URL is not set')
+        setFeedbacks(previous)
+        setApprovingId(null)
+        return
+      }
+
+      const requestBody: { action: string; feedback_id: number; approved?: boolean } = {
+        action: 'approve',
+        feedback_id: feedback.id
+      }
+      
+      // Only include approved field if we're revoking (setting to false)
+      if (newApprovedValue === false) {
+        requestBody.approved = false
+      }
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(requestBody)
+      })
+
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(`Failed to approve feedback: ${response.status} ${errorData}`)
+      }
+
+      // Refetch the current page after successful approval to get the latest data
+      lastFetchParamsRef.current = null
+      await fetchFeedbacks(limit, offset)
+    } catch (err: any) {
+      setError(err?.message || 'Failed to approve feedback')
+      setFeedbacks(previous)
+    } finally {
+      setApprovingId(null)
+    }
+  }
+
   const currentPage = Math.floor(offset / limit) + 1
   const totalPages = pageInfo ? Math.ceil(pageInfo.total / limit) : 0
   const startItem = offset + 1
@@ -326,21 +374,13 @@ const FeedbackList: React.FC = () => {
                             {feedback.created_by || 'N/A'}
                           </span>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-gray-500">At:</span>
-                          <span>{formatTimestamp(feedback.created_at)}</span>
-                        </div>
-                        {feedback.updated_by && feedback.updated_at && (
-                          <>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-gray-500">Updated by:</span>
-                              <span>{feedback.updated_by}</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-semibold text-gray-500">Updated at:</span>
-                              <span>{formatTimestamp(feedback.updated_at)}</span>
-                            </div>
-                          </>
+                        {feedback.approved !== null && feedback.approved !== undefined && (
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-gray-500">Approved:</span>
+                            <span className={feedback.approved ? 'text-green-600' : 'text-red-600'}>
+                              {feedback.approved ? 'Yes' : 'No'}
+                            </span>
+                          </div>
                         )}
                       </div>
                       <div className="flex items-center gap-2">
@@ -355,6 +395,29 @@ const FeedbackList: React.FC = () => {
                             <option key={v} value={v}>{v}</option>
                           ))}
                         </select>
+                        <button
+                          onClick={() => handleApprove(feedback)}
+                          disabled={approvingId === feedback.id || updatingId === feedback.id}
+                          className={`flex-shrink-0 px-2 py-1 text-xs rounded focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            feedback.approved === true
+                              ? 'text-orange-600 hover:text-orange-700 hover:bg-orange-50 focus:ring-orange-500'
+                              : 'text-green-600 hover:text-green-700 hover:bg-green-50 focus:ring-green-500'
+                          }`}
+                          title={feedback.approved === true ? 'Revoke approval' : 'Approve'}
+                          aria-label={feedback.approved === true ? 'Revoke approval' : 'Approve feedback'}
+                        >
+                          {approvingId === feedback.id ? (
+                            <span className="flex items-center gap-1">
+                              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              <span>Processing...</span>
+                            </span>
+                          ) : (
+                            <span>{feedback.approved === true ? 'Revoke' : 'Approve'}</span>
+                          )}
+                        </button>
                         <button
                           onClick={() => setShowDeleteConfirm(feedback)}
                           disabled={deletingId === feedback.id}
